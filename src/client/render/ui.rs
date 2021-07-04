@@ -10,6 +10,9 @@ use bxw_util::direction::*;
 use bxw_util::math::*;
 use bxw_util::*;
 use bxw_world::TextureMapping;
+use egui::CtxRef;
+pub use egui::math as emath;
+pub use egui::paint as epaint;
 use itertools::zip;
 use std::borrow::Cow;
 use std::ffi::CString;
@@ -581,6 +584,7 @@ pub struct GuiRenderer {
     pub gui_frame_pool: Vec<GuiFrame>,
     pub gui_buffers: Vec<(OwnedBuffer, OwnedBuffer)>,
     gui_vtx_write: GuiVtxWriter,
+    pub egui_ctx: CtxRef,
 }
 
 impl GuiRenderer {
@@ -807,6 +811,8 @@ impl GuiRenderer {
             gui_buffers.push(Self::new_buffers(rctx, 16 * 1024));
         }
 
+        let mut egui_ctx = CtxRef::default();
+
         Self {
             resources,
             texture_ds,
@@ -817,6 +823,7 @@ impl GuiRenderer {
             gui_frame_pool,
             gui_buffers,
             gui_vtx_write: Default::default(),
+            egui_ctx,
         }
     }
 
