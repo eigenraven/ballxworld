@@ -10,7 +10,6 @@ use bxw_util::direction::*;
 use bxw_util::math::*;
 use bxw_util::*;
 use bxw_world::TextureMapping;
-use egui::CtxRef;
 pub use egui::math as emath;
 pub use egui::paint as epaint;
 use itertools::zip;
@@ -19,6 +18,8 @@ use std::ffi::CString;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::sync::Arc;
 use vk_mem as vma;
+
+use super::egui_ash_sdl::EguiIntegration;
 
 pub mod z {
     pub const GUI_Z_OFFSET_BG: i32 = 0;
@@ -584,7 +585,7 @@ pub struct GuiRenderer {
     pub gui_frame_pool: Vec<GuiFrame>,
     pub gui_buffers: Vec<(OwnedBuffer, OwnedBuffer)>,
     gui_vtx_write: GuiVtxWriter,
-    pub egui_ctx: CtxRef,
+    pub egui_integ: EguiIntegration,
 }
 
 impl GuiRenderer {
@@ -811,7 +812,10 @@ impl GuiRenderer {
             gui_buffers.push(Self::new_buffers(rctx, 16 * 1024));
         }
 
-        let mut egui_ctx = CtxRef::default();
+        let font_defs = egui::FontDefinitions::default();
+        let style = egui::Style::default();
+        let egui_integ = EguiIntegration::new(font_defs, style, rctx);
+        egui_integ.context().set_visuals(egui::Visuals::dark());
 
         Self {
             resources,
@@ -823,7 +827,7 @@ impl GuiRenderer {
             gui_frame_pool,
             gui_buffers,
             gui_vtx_write: Default::default(),
-            egui_ctx,
+            egui_integ,
         }
     }
 
@@ -856,6 +860,7 @@ impl GuiRenderer {
 
     pub fn destroy(mut self, handles: &RenderingHandles) {
         unsafe {
+            self.egui_integ.destroy(handles);
             handles
                 .device
                 .destroy_pipeline(self.pipeline, allocation_cbs());
@@ -879,7 +884,26 @@ impl GuiRenderer {
     pub fn prepass_draw(&mut self, fctx: &mut PrePassFrameContext) -> &mut GuiFrame {
         let frame = &mut self.gui_frame_pool[fctx.inflight_index];
         frame.reset();
+        self.egui_integ.begin_frame();
+
+        egui::Window::new("My Window")
+            .resizable(true)
+            .scroll(true)
+            .show(&self.egui_integ.context(), |ui| {
+                ui.heading("Hello");
+                ui.label("Hello egui!");
+                ui.separator();
+                ui.hyperlink("https://github.com/emilk/egui");
+                ui.separator();
+                ui.label("Rotation");
+                ui.label("Light Position");
+            });
+
         frame
+    }
+
+    pub fn late_prepass_draw(&mut self, fctx: &mut PrePassFrameContext) {
+        self.egui_integ.prepass_draw(fctx.cmd, fctx);
     }
 
     #[allow(clippy::cast_ptr_alignment)]
@@ -953,6 +977,12 @@ impl GuiRenderer {
             device.cmd_bind_vertex_buffers(fctx.cmd, 0, &[vbuf.buffer], &[0]);
             device.cmd_bind_index_buffer(fctx.cmd, ibuf.buffer, 0, vk::IndexType::UINT32);
             device.cmd_draw_indexed(fctx.cmd, self.gui_vtx_write.indxs.len() as u32, 1, 0, 0, 0);
+        }
+        let (_output, shapes, cursor) = self.egui_integ.end_frame(fctx.rctx.window.subsystem());
+        let clipped_meshes = self.egui_integ.context().tessellate(shapes);
+        self.egui_integ.paint(fctx.cmd, clipped_meshes, fctx);
+        if let Some(_cursor) = cursor {
+            //TODO:fwd to InputManager
         }
     }
 }

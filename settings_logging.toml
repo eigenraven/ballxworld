@@ -8,6 +8,13 @@ target = "stdout"
 kind = "pattern"
 pattern = "{d(%_H:%M:%S%.3f)} {h({l:6})} {t} - {m}{n}"
 
+[appenders.tracefile]
+kind = "file"
+path = "bxw-trace.log"
+[appenders.tracefile.encoder]
+kind = "pattern"
+pattern = "{d(%_H:%M:%S%.3f)} {h({l:6})} {t} - {m}{n}"
+
 [root]
 level = "debug"
 appenders = ["stdout"]

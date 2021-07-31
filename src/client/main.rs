@@ -436,6 +436,7 @@ pub fn client_main() {
                 let mut iscreen = UiPlayerInventory {};
                 iscreen.draw(gui, Some((&world, &client_world)));
             }
+            guictx.late_prepass_draw(&mut fc);
             fc.end_region();
             drop(_p_span_prepass);
             let _p_span_inpass =
@@ -470,6 +471,7 @@ pub fn client_main() {
             bxw_util::tracy_client::Span::new("Input processing", "mainloop", file!(), line!(), 4);
         input_mgr.pre_process();
         for event in event_pump.poll_iter() {
+            guictx.egui_integ.handle_event(&event, &mut rctx);
             input_mgr.process(&mut rctx, event);
         }
         input_mgr.post_events_update(&mut rctx);

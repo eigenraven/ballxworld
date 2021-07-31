@@ -65,12 +65,12 @@ use sdl2::keyboard::Keycode;
 use crate::client::render::vulkan::INFLIGHT_FRAMES;
 use crate::client::render::RenderingContext;
 
-use super::InPassFrameContext;
+use super::{vulkan::RenderingHandles, InPassFrameContext, PrePassFrameContext};
 
 /// egui integration with winit, ash and vk_mem.
-pub struct Integration {
-    physical_width: u32,
-    physical_height: u32,
+pub struct EguiIntegration {
+    logical_width: u32,
+    logical_height: u32,
     scale_factor: f64,
     context: CtxRef,
     raw_input: egui::RawInput,
@@ -98,17 +98,16 @@ pub struct Integration {
     user_texture_layout: vk::DescriptorSetLayout,
     user_textures: Vec<Option<vk::DescriptorSet>>,
 }
-impl Integration {
+impl EguiIntegration {
     /// Create an instance of the integration.
     pub fn new(
-        physical_width: u32,
-        physical_height: u32,
-        scale_factor: f64,
         font_definitions: egui::FontDefinitions,
         style: egui::Style,
         rctx: &mut RenderingContext,
     ) -> Self {
         let device = &rctx.handles.device;
+        let (logical_width, logical_height) = rctx.window.vulkan_drawable_size();
+        let scale_factor: f64 = logical_width as f64 / (rctx.window.size().0 as f64).max(1.0);
 
         // Create context
         let context = CtxRef::default();
@@ -120,7 +119,7 @@ impl Integration {
             pixels_per_point: Some(scale_factor as f32),
             screen_rect: Some(egui::Rect::from_min_size(
                 Default::default(),
-                vec2(physical_width as f32, physical_height as f32) / scale_factor as f32,
+                vec2(logical_width as f32, logical_height as f32),
             )),
             time: Some(0.0),
             ..Default::default()
@@ -285,7 +284,7 @@ impl Integration {
                 .vertex_attribute_descriptions(&attributes)
                 .vertex_binding_descriptions(&bindings);
             let multisample_info = vk::PipelineMultisampleStateCreateInfo::builder()
-                .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+                .rasterization_samples(rctx.handles.sample_count);
 
             let pipeline_create_info = [vk::GraphicsPipelineCreateInfo::builder()
                 .stages(&pipeline_shader_stages)
@@ -413,8 +412,8 @@ impl Integration {
         let user_textures = vec![];
 
         Self {
-            physical_width,
-            physical_height,
+            logical_width,
+            logical_height,
             scale_factor,
             context,
             raw_input,
@@ -455,7 +454,7 @@ impl Integration {
     }
 
     /// handling winit event.
-    pub fn handle_event(&mut self, winit_event: &Event, sdl_video: &sdl2::VideoSubsystem) {
+    pub fn handle_event(&mut self, winit_event: &Event, rctx: &mut RenderingContext) {
         match winit_event {
             Event::Window {
                 timestamp: _timestamp,
@@ -463,34 +462,18 @@ impl Integration {
                 win_event,
             } => match win_event {
                 // window size changed
-                WindowEvent::SizeChanged(width, height) => {
-                    let pixels_per_point = self
-                        .raw_input
-                        .pixels_per_point
-                        .unwrap_or_else(|| self.context.pixels_per_point());
+                WindowEvent::SizeChanged(..) => {
+                    let (logical_width, logical_height) = rctx.window.vulkan_drawable_size();
+                    self.logical_width = logical_width;
+                    self.logical_height = logical_height;
+                    let scale_factor: f64 =
+                        logical_width as f64 / (rctx.window.size().0 as f64).max(1.0);
+                    self.raw_input.pixels_per_point = Some(scale_factor as f32);
                     self.raw_input.screen_rect = Some(egui::Rect::from_min_size(
                         Default::default(),
-                        vec2(*width as f32, *height as f32) / pixels_per_point,
+                        vec2(logical_width as f32, logical_height as f32),
                     ));
                 }
-                // dpi changed
-                /*WindowEvent:: {
-                    scale_factor,
-                    new_inner_size,
-                } => {
-                    self.scale_factor = *scale_factor;
-                    self.raw_input.pixels_per_point = Some(*scale_factor as f32);
-                    let pixels_per_point = self
-                        .raw_input
-                        .pixels_per_point
-                        .unwrap_or_else(|| self.context.pixels_per_point());
-                    self.raw_input.screen_rect = Some(egui::Rect::from_min_size(
-                        Default::default(),
-                        vec2(new_inner_size.width as f32, new_inner_size.height as f32)
-                            / pixels_per_point,
-                    ));
-                }
-                */
                 // mouse out
                 WindowEvent::Leave => {
                     self.raw_input.events.push(egui::Event::PointerGone);
@@ -499,10 +482,7 @@ impl Integration {
             },
             // mouse click
             Event::MouseButtonDown {
-                mouse_btn,
-                x,
-                y,
-                ..
+                mouse_btn, x, y, ..
             } => {
                 if let Some(button) = Self::sdl_to_egui_mouse_button(*mouse_btn) {
                     self.raw_input.events.push(egui::Event::PointerButton {
@@ -510,16 +490,13 @@ impl Integration {
                         button,
                         pressed: true,
                         modifiers: Self::sdl_to_egui_modifiers(
-                            sdl_video.sdl().keyboard().mod_state(),
+                            rctx.window.subsystem().sdl().keyboard().mod_state(),
                         ),
                     });
                 }
             }
             Event::MouseButtonUp {
-                mouse_btn,
-                x,
-                y,
-                ..
+                mouse_btn, x, y, ..
             } => {
                 if let Some(button) = Self::sdl_to_egui_mouse_button(*mouse_btn) {
                     self.raw_input.events.push(egui::Event::PointerButton {
@@ -527,7 +504,7 @@ impl Integration {
                         button,
                         pressed: false,
                         modifiers: Self::sdl_to_egui_modifiers(
-                            sdl_video.sdl().keyboard().mod_state(),
+                            rctx.window.subsystem().sdl().keyboard().mod_state(),
                         ),
                     });
                 }
@@ -549,9 +526,7 @@ impl Integration {
             }
             // keyboard inputs
             Event::KeyDown {
-                keycode,
-                keymod,
-                ..
+                keycode, keymod, ..
             } => {
                 let modifiers = Self::sdl_to_egui_modifiers(*keymod);
                 if let Some(keycode) = keycode {
@@ -562,7 +537,7 @@ impl Integration {
                     } else if is_ctrl && keycode == Keycode::X {
                         self.raw_input.events.push(egui::Event::Cut);
                     } else if is_ctrl && keycode == Keycode::V {
-                        if let Ok(contents) = sdl_video.clipboard().clipboard_text() {
+                        if let Ok(contents) = rctx.window.subsystem().clipboard().clipboard_text() {
                             self.raw_input.events.push(egui::Event::Text(contents));
                         }
                     } else if let Some(key) = Self::sdl_to_egui_key_code(keycode) {
@@ -575,9 +550,7 @@ impl Integration {
                 }
             }
             Event::KeyUp {
-                keycode,
-                keymod,
-                ..
+                keycode, keymod, ..
             } => {
                 let modifiers = Self::sdl_to_egui_modifiers(*keymod);
                 if let Some(keycode) = keycode {
@@ -750,7 +723,7 @@ impl Integration {
         // handle cursor icon
         let mut cursor = None;
         if self.current_cursor_icon != output.cursor_icon {
-            cursor = Integration::egui_to_sdl_cursor_icon(output.cursor_icon);
+            cursor = Self::egui_to_sdl_cursor_icon(output.cursor_icon);
             self.current_cursor_icon = output.cursor_icon;
         }
 
@@ -762,6 +735,22 @@ impl Integration {
         self.context.clone()
     }
 
+    /// Update textures etc.
+    pub fn prepass_draw(
+        &mut self,
+        command_buffer: vk::CommandBuffer,
+        fctx: &mut PrePassFrameContext,
+    ) {
+        self.logical_width = fctx.dims[0];
+        self.logical_height = fctx.dims[1];
+        self.raw_input.screen_rect = Some(egui::Rect::from_min_size(
+            Default::default(),
+            egui::vec2(self.logical_width as f32, self.logical_height as f32),
+        ));
+        // update font texture
+        self.upload_font_texture(command_buffer, &self.context.fonts().texture(), fctx.rctx);
+    }
+
     /// Record paint commands.
     pub fn paint(
         &mut self,
@@ -771,9 +760,6 @@ impl Integration {
     ) {
         // update time
         self.raw_input.time = Some(self.raw_input.time.unwrap_or(0.0) + fctx.delta_time);
-        
-        // update font texture
-        self.upload_font_texture(command_buffer, &self.context.fonts().texture(), fctx.rctx);
 
         let device = &fctx.rctx.handles.device;
 
@@ -816,14 +802,14 @@ impl Integration {
                 &[vk::Viewport::builder()
                     .x(0.0)
                     .y(0.0)
-                    .width(self.physical_width as f32)
-                    .height(self.physical_height as f32)
+                    .width(self.logical_width as f32)
+                    .height(self.logical_height as f32)
                     .min_depth(0.0)
                     .max_depth(1.0)
                     .build()],
             );
-            let width_points = self.physical_width as f32 / self.scale_factor as f32;
-            let height_points = self.physical_height as f32 / self.scale_factor as f32;
+            let wsz = fctx.rctx.window.size();
+            let (width_points, height_points) = (wsz.0 as f32, wsz.1 as f32);
             device.cmd_push_constants(
                 command_buffer,
                 self.pipeline_layout,
@@ -911,8 +897,8 @@ impl Integration {
                     y: min.y * self.scale_factor as f32,
                 };
                 let min = egui::Pos2 {
-                    x: f32::clamp(min.x, 0.0, self.physical_width as f32),
-                    y: f32::clamp(min.y, 0.0, self.physical_height as f32),
+                    x: f32::clamp(min.x, 0.0, self.logical_width as f32),
+                    y: f32::clamp(min.y, 0.0, self.logical_height as f32),
                 };
                 let max = rect.max;
                 let max = egui::Pos2 {
@@ -920,8 +906,8 @@ impl Integration {
                     y: max.y * self.scale_factor as f32,
                 };
                 let max = egui::Pos2 {
-                    x: f32::clamp(max.x, min.x, self.physical_width as f32),
-                    y: f32::clamp(max.y, min.y, self.physical_height as f32),
+                    x: f32::clamp(max.x, min.x, self.logical_width as f32),
+                    y: f32::clamp(max.y, min.y, self.logical_height as f32),
                 };
                 device.cmd_set_scissor(
                     command_buffer,
@@ -1293,11 +1279,11 @@ impl Integration {
     ///
     /// # Safety
     /// This method release vk objects memory that is not managed by Rust.
-    pub unsafe fn destroy(&mut self, rctx: &mut RenderingContext) {
-        let device = &rctx.handles.device;
+    pub unsafe fn destroy(&mut self, handles: &RenderingHandles) {
+        let device = &handles.device;
         device.destroy_descriptor_set_layout(self.user_texture_layout, None);
         device.destroy_image_view(self.font_image_view, None);
-        let vmalloc = rctx.handles.vmalloc.lock();
+        let vmalloc = handles.vmalloc.lock();
         vmalloc
             .destroy_image(self.font_image, &self.font_image_allocation)
             .expect("Failed to destroy image.");
