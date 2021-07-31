@@ -50,47 +50,38 @@
 //! [Full example is in examples directory](https://github.com/MatchaChoco010/egui_winit_ash_vk_mem/tree/main/examples/example)
 #![warn(missing_docs)]
 
-use std::ffi::CString;
-use std::include_bytes;
-use std::sync::Arc;
-use std::time::Instant;
+use std::ffi::CStr;
 
-use ash::{extensions::khr::Swapchain, version::DeviceV1_0, vk, Device};
-use bytemuck::bytes_of;
-use copypasta::{ClipboardContext, ClipboardProvider};
+use ash::{version::DeviceV1_0, vk};
+use bxw_util::bytemuck::bytes_of;
 use egui::{
     math::{pos2, vec2},
     paint::ClippedShape,
     CtxRef, Key,
 };
-use winit::event::{Event, ModifiersState, VirtualKeyCode, WindowEvent};
-use winit::window::Window;
+use sdl2::event::{Event, WindowEvent};
+use sdl2::keyboard::Keycode;
+
+use crate::client::render::vulkan::INFLIGHT_FRAMES;
+use crate::client::render::RenderingContext;
+
+use super::InPassFrameContext;
 
 /// egui integration with winit, ash and vk_mem.
 pub struct Integration {
-    start_time: Option<Instant>,
-
     physical_width: u32,
     physical_height: u32,
     scale_factor: f64,
     context: CtxRef,
     raw_input: egui::RawInput,
     mouse_pos: egui::Pos2,
-    modifiers_state: ModifiersState,
-    clipboard: ClipboardContext,
     current_cursor_icon: egui::CursorIcon,
 
-    device: Device,
-    allocator: Arc<vk_mem::Allocator>,
-    swapchain_loader: Swapchain,
     descriptor_pool: vk::DescriptorPool,
     descriptor_set_layouts: Vec<vk::DescriptorSetLayout>,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
     sampler: vk::Sampler,
-    render_pass: vk::RenderPass,
-    framebuffer_color_image_views: Vec<vk::ImageView>,
-    framebuffers: Vec<vk::Framebuffer>,
     vertex_buffers: Vec<vk::Buffer>,
     vertex_buffer_allocations: Vec<vk_mem::Allocation>,
     index_buffers: Vec<vk::Buffer>,
@@ -115,14 +106,9 @@ impl Integration {
         scale_factor: f64,
         font_definitions: egui::FontDefinitions,
         style: egui::Style,
-        device: Device,
-        allocator: Arc<vk_mem::Allocator>,
-        swapchain_loader: Swapchain,
-        swapchain: vk::SwapchainKHR,
-        surface_format: vk::SurfaceFormatKHR,
+        rctx: &mut RenderingContext,
     ) -> Self {
-        // Start time is initialized when first time call render_time
-        let start_time = None;
+        let device = &rctx.handles.device;
 
         // Create context
         let context = CtxRef::default();
@@ -142,17 +128,6 @@ impl Integration {
 
         // Create mouse pos and modifier state (These values are overwritten by handle events)
         let mouse_pos = pos2(0.0, 0.0);
-        let modifiers_state = winit::event::ModifiersState::default();
-
-        // Create clipboard context
-        let clipboard = ClipboardContext::new().expect("Failed to initialize ClipboardContext.");
-
-        // Get swap_images to get len of swapchain images and to create framebuffers
-        let swap_images = unsafe {
-            swapchain_loader
-                .get_swapchain_images(swapchain)
-                .expect("Failed to get swapchain images.")
-        };
 
         // Create DescriptorPool
         let descriptor_pool = unsafe {
@@ -172,7 +147,7 @@ impl Integration {
         // Create DescriptorSetLayouts
         let descriptor_set_layouts = {
             let mut sets = vec![];
-            for _ in 0..swap_images.len() {
+            for _ in 0..INFLIGHT_FRAMES {
                 sets.push(
                     unsafe {
                         device.create_descriptor_set_layout(
@@ -192,40 +167,6 @@ impl Integration {
             }
             sets
         };
-
-        // Create RenderPass
-        let render_pass = unsafe {
-            device.create_render_pass(
-                &vk::RenderPassCreateInfo::builder()
-                    .attachments(&[vk::AttachmentDescription::builder()
-                        .format(surface_format.format)
-                        .samples(vk::SampleCountFlags::TYPE_1)
-                        .load_op(vk::AttachmentLoadOp::LOAD)
-                        .store_op(vk::AttachmentStoreOp::STORE)
-                        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-                        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-                        .initial_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-                        .build()])
-                    .subpasses(&[vk::SubpassDescription::builder()
-                        .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-                        .color_attachments(&[vk::AttachmentReference::builder()
-                            .attachment(0)
-                            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                            .build()])
-                        .build()])
-                    .dependencies(&[vk::SubpassDependency::builder()
-                        .src_subpass(vk::SUBPASS_EXTERNAL)
-                        .dst_subpass(0)
-                        .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
-                        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
-                        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-                        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-                        .build()]),
-                None,
-            )
-        }
-        .expect("Failed to create render pass.");
 
         // Create PipelineLayout
         let pipeline_layout = unsafe {
@@ -276,37 +217,25 @@ impl Integration {
                     .build(),
             ];
 
-            let vertex_shader_module = {
-                let bytes_code = include_bytes!("shaders/spv/vert.spv");
-                let shader_module_create_info = vk::ShaderModuleCreateInfo {
-                    code_size: bytes_code.len(),
-                    p_code: bytes_code.as_ptr() as *const u32,
-                    ..Default::default()
-                };
-                unsafe { device.create_shader_module(&shader_module_create_info, None) }
-                    .expect("Failed to create vertex shader module.")
-            };
-            let fragment_shader_module = {
-                let bytes_code = include_bytes!("shaders/spv/frag.spv");
-                let shader_module_create_info = vk::ShaderModuleCreateInfo {
-                    code_size: bytes_code.len(),
-                    p_code: bytes_code.as_ptr() as *const u32,
-                    ..Default::default()
-                };
-                unsafe { device.create_shader_module(&shader_module_create_info, None) }
-                    .expect("Failed to create fragment shader module.")
-            };
-            let main_function_name = CString::new("main").unwrap();
+            let vertex_shader_module = rctx
+                .handles
+                .load_shader_module("res/shaders/egui.vert.spv")
+                .expect("Couldn't load vertex egui shader");
+            let fragment_shader_module = rctx
+                .handles
+                .load_shader_module("res/shaders/egui.frag.spv")
+                .expect("Couldn't load fragment egui shader");
+            let main_function_name = CStr::from_bytes_with_nul(b"main\0").unwrap();
             let pipeline_shader_stages = [
                 vk::PipelineShaderStageCreateInfo::builder()
                     .stage(vk::ShaderStageFlags::VERTEX)
                     .module(vertex_shader_module)
-                    .name(&main_function_name)
+                    .name(main_function_name)
                     .build(),
                 vk::PipelineShaderStageCreateInfo::builder()
                     .stage(vk::ShaderStageFlags::FRAGMENT)
                     .module(fragment_shader_module)
-                    .name(&main_function_name)
+                    .name(main_function_name)
                     .build(),
             ];
 
@@ -369,7 +298,7 @@ impl Integration {
                 .color_blend_state(&color_blend_info)
                 .dynamic_state(&dynamic_state_info)
                 .layout(pipeline_layout)
-                .render_pass(render_pass)
+                .render_pass(rctx.handles.mainpass)
                 .subpass(0)
                 .build()];
 
@@ -380,7 +309,7 @@ impl Integration {
                     None,
                 )
             }
-            .expect("Failed to create graphics pipeline.")[0];
+            .expect("Failed to create egui graphics pipeline.")[0];
             unsafe {
                 device.destroy_shader_module(vertex_shader_module, None);
                 device.destroy_shader_module(fragment_shader_module, None);
@@ -406,55 +335,14 @@ impl Integration {
         }
         .expect("Failed to create sampler.");
 
-        // Create Framebuffers
-        let framebuffer_color_image_views = swap_images
-            .iter()
-            .map(|swapchain_image| unsafe {
-                device
-                    .create_image_view(
-                        &vk::ImageViewCreateInfo::builder()
-                            .image(swapchain_image.clone())
-                            .view_type(vk::ImageViewType::TYPE_2D)
-                            .format(surface_format.format)
-                            .subresource_range(
-                                vk::ImageSubresourceRange::builder()
-                                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                                    .base_mip_level(0)
-                                    .level_count(1)
-                                    .base_array_layer(0)
-                                    .layer_count(1)
-                                    .build(),
-                            ),
-                        None,
-                    )
-                    .expect("Failed to create image view.")
-            })
-            .collect::<Vec<_>>();
-        let framebuffers = framebuffer_color_image_views
-            .iter()
-            .map(|&image_views| unsafe {
-                let attachments = &[image_views];
-                device
-                    .create_framebuffer(
-                        &vk::FramebufferCreateInfo::builder()
-                            .render_pass(render_pass)
-                            .attachments(attachments)
-                            .width(physical_width)
-                            .height(physical_height)
-                            .layers(1),
-                        None,
-                    )
-                    .expect("Failed to create framebuffer.")
-            })
-            .collect::<Vec<_>>();
-
         // Create vertex buffer and index buffer
         let mut vertex_buffers = vec![];
         let mut vertex_buffer_allocations = vec![];
         let mut index_buffers = vec![];
         let mut index_buffer_allocations = vec![];
-        for _ in 0..framebuffers.len() {
-            let (vertex_buffer, vertex_buffer_allocation, _info) = allocator
+        let vmalloc = rctx.handles.vmalloc.lock();
+        for _ in 0..INFLIGHT_FRAMES {
+            let (vertex_buffer, vertex_buffer_allocation, _info) = vmalloc
                 .create_buffer(
                     &vk::BufferCreateInfo::builder()
                         .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
@@ -468,7 +356,7 @@ impl Integration {
                     },
                 )
                 .expect("Failed to create vertex buffer.");
-            let (index_buffer, index_buffer_allocation, _info) = allocator
+            let (index_buffer, index_buffer_allocation, _info) = vmalloc
                 .create_buffer(
                     &vk::BufferCreateInfo::builder()
                         .usage(vk::BufferUsageFlags::INDEX_BUFFER)
@@ -487,6 +375,7 @@ impl Integration {
             index_buffers.push(index_buffer);
             index_buffer_allocations.push(index_buffer_allocation);
         }
+        drop(vmalloc);
 
         // Create font image and anything related to it
         // These values will be uploaded at rendering time
@@ -524,29 +413,19 @@ impl Integration {
         let user_textures = vec![];
 
         Self {
-            start_time,
-
             physical_width,
             physical_height,
             scale_factor,
             context,
             raw_input,
             mouse_pos,
-            modifiers_state,
-            clipboard,
             current_cursor_icon: egui::CursorIcon::None,
 
-            device,
-            allocator,
-            swapchain_loader,
             descriptor_pool,
             descriptor_set_layouts,
             pipeline_layout,
             pipeline,
             sampler,
-            render_pass,
-            framebuffer_color_image_views,
-            framebuffers,
             vertex_buffers,
             vertex_buffer_allocations,
             index_buffers,
@@ -576,26 +455,26 @@ impl Integration {
     }
 
     /// handling winit event.
-    pub fn handle_event<T>(&mut self, winit_event: &Event<T>) {
+    pub fn handle_event(&mut self, winit_event: &Event, sdl_video: &sdl2::VideoSubsystem) {
         match winit_event {
-            Event::WindowEvent {
+            Event::Window {
+                timestamp: _timestamp,
                 window_id: _window_id,
-                event,
-            } => match event {
+                win_event,
+            } => match win_event {
                 // window size changed
-                WindowEvent::Resized(physical_size) => {
+                WindowEvent::SizeChanged(width, height) => {
                     let pixels_per_point = self
                         .raw_input
                         .pixels_per_point
                         .unwrap_or_else(|| self.context.pixels_per_point());
                     self.raw_input.screen_rect = Some(egui::Rect::from_min_size(
                         Default::default(),
-                        vec2(physical_size.width as f32, physical_size.height as f32)
-                            / pixels_per_point,
+                        vec2(*width as f32, *height as f32) / pixels_per_point,
                     ));
                 }
                 // dpi changed
-                WindowEvent::ScaleFactorChanged {
+                /*WindowEvent:: {
                     scale_factor,
                     new_inner_size,
                 } => {
@@ -611,201 +490,225 @@ impl Integration {
                             / pixels_per_point,
                     ));
                 }
-                // mouse click
-                WindowEvent::MouseInput { state, button, .. } => {
-                    if let Some(button) = Self::winit_to_egui_mouse_button(*button) {
-                        self.raw_input.events.push(egui::Event::PointerButton {
-                            pos: self.mouse_pos,
-                            button,
-                            pressed: *state == winit::event::ElementState::Pressed,
-                            modifiers: Self::winit_to_egui_modifiers(self.modifiers_state),
-                        });
-                    }
-                }
-                // mouse wheel
-                WindowEvent::MouseWheel { delta, .. } => match delta {
-                    winit::event::MouseScrollDelta::LineDelta(x, y) => {
-                        let line_height = 24.0;
-                        self.raw_input.scroll_delta = vec2(*x, *y) * line_height;
-                    }
-                    winit::event::MouseScrollDelta::PixelDelta(delta) => {
-                        self.raw_input.scroll_delta = vec2(delta.x as f32, delta.y as f32);
-                    }
-                },
-                // mouse move
-                WindowEvent::CursorMoved { position, .. } => {
-                    let pixels_per_point = self
-                        .raw_input
-                        .pixels_per_point
-                        .unwrap_or_else(|| self.context.pixels_per_point());
-                    let pos = pos2(
-                        position.x as f32 / pixels_per_point,
-                        position.y as f32 / pixels_per_point,
-                    );
-                    self.raw_input.events.push(egui::Event::PointerMoved(pos));
-                    self.mouse_pos = pos;
-                }
+                */
                 // mouse out
-                WindowEvent::CursorLeft { .. } => {
+                WindowEvent::Leave => {
                     self.raw_input.events.push(egui::Event::PointerGone);
-                }
-                // modifier keys
-                WindowEvent::ModifiersChanged(input) => self.modifiers_state = *input,
-                // keyboard inputs
-                WindowEvent::KeyboardInput { input, .. } => {
-                    if let Some(virtual_keycode) = input.virtual_keycode {
-                        let pressed = input.state == winit::event::ElementState::Pressed;
-                        if pressed {
-                            let is_ctrl = self.modifiers_state.ctrl();
-                            if is_ctrl && virtual_keycode == VirtualKeyCode::C {
-                                self.raw_input.events.push(egui::Event::Copy);
-                            } else if is_ctrl && virtual_keycode == VirtualKeyCode::X {
-                                self.raw_input.events.push(egui::Event::Cut);
-                            } else if is_ctrl && virtual_keycode == VirtualKeyCode::V {
-                                if let Ok(contents) = self.clipboard.get_contents() {
-                                    self.raw_input.events.push(egui::Event::Text(contents));
-                                }
-                            } else if let Some(key) = Self::winit_to_egui_key_code(virtual_keycode)
-                            {
-                                self.raw_input.events.push(egui::Event::Key {
-                                    key,
-                                    pressed: input.state == winit::event::ElementState::Pressed,
-                                    modifiers: Self::winit_to_egui_modifiers(self.modifiers_state),
-                                })
-                            }
-                        }
-                    }
-                }
-                // receive character
-                WindowEvent::ReceivedCharacter(ch) => {
-                    // remove control character
-                    if ch.is_ascii_control() {
-                        return;
-                    }
-                    self.raw_input
-                        .events
-                        .push(egui::Event::Text(ch.to_string()));
                 }
                 _ => (),
             },
+            // mouse click
+            Event::MouseButtonDown {
+                mouse_btn,
+                x,
+                y,
+                ..
+            } => {
+                if let Some(button) = Self::sdl_to_egui_mouse_button(*mouse_btn) {
+                    self.raw_input.events.push(egui::Event::PointerButton {
+                        pos: egui::pos2(*x as f32, *y as f32),
+                        button,
+                        pressed: true,
+                        modifiers: Self::sdl_to_egui_modifiers(
+                            sdl_video.sdl().keyboard().mod_state(),
+                        ),
+                    });
+                }
+            }
+            Event::MouseButtonUp {
+                mouse_btn,
+                x,
+                y,
+                ..
+            } => {
+                if let Some(button) = Self::sdl_to_egui_mouse_button(*mouse_btn) {
+                    self.raw_input.events.push(egui::Event::PointerButton {
+                        pos: egui::pos2(*x as f32, *y as f32),
+                        button,
+                        pressed: false,
+                        modifiers: Self::sdl_to_egui_modifiers(
+                            sdl_video.sdl().keyboard().mod_state(),
+                        ),
+                    });
+                }
+            }
+            // mouse wheel
+            Event::MouseWheel { x, y, .. } => {
+                let wheel_factor = 1.0;
+                self.raw_input.scroll_delta = vec2(*x as f32, *y as f32) * wheel_factor;
+            }
+            // mouse move
+            Event::MouseMotion { x, y, .. } => {
+                let pixels_per_point = self
+                    .raw_input
+                    .pixels_per_point
+                    .unwrap_or_else(|| self.context.pixels_per_point());
+                let pos = pos2(*x as f32 / pixels_per_point, *y as f32 / pixels_per_point);
+                self.raw_input.events.push(egui::Event::PointerMoved(pos));
+                self.mouse_pos = pos;
+            }
+            // keyboard inputs
+            Event::KeyDown {
+                keycode,
+                keymod,
+                ..
+            } => {
+                let modifiers = Self::sdl_to_egui_modifiers(*keymod);
+                if let Some(keycode) = keycode {
+                    let keycode = *keycode;
+                    let is_ctrl = modifiers.ctrl;
+                    if is_ctrl && keycode == Keycode::C {
+                        self.raw_input.events.push(egui::Event::Copy);
+                    } else if is_ctrl && keycode == Keycode::X {
+                        self.raw_input.events.push(egui::Event::Cut);
+                    } else if is_ctrl && keycode == Keycode::V {
+                        if let Ok(contents) = sdl_video.clipboard().clipboard_text() {
+                            self.raw_input.events.push(egui::Event::Text(contents));
+                        }
+                    } else if let Some(key) = Self::sdl_to_egui_key_code(keycode) {
+                        self.raw_input.events.push(egui::Event::Key {
+                            key,
+                            pressed: true,
+                            modifiers,
+                        })
+                    }
+                }
+            }
+            Event::KeyUp {
+                keycode,
+                keymod,
+                ..
+            } => {
+                let modifiers = Self::sdl_to_egui_modifiers(*keymod);
+                if let Some(keycode) = keycode {
+                    let keycode = *keycode;
+                    if let Some(key) = Self::sdl_to_egui_key_code(keycode) {
+                        self.raw_input.events.push(egui::Event::Key {
+                            key,
+                            pressed: false,
+                            modifiers,
+                        })
+                    }
+                }
+            }
+            // receive character
+            Event::TextInput { text, .. } => {
+                // remove control character
+                if text.chars().all(|c| c.is_ascii_control()) {
+                    return;
+                }
+                self.raw_input.events.push(egui::Event::Text(text.clone()));
+            }
             _ => (),
         }
     }
 
-    fn winit_to_egui_key_code(key: VirtualKeyCode) -> Option<egui::Key> {
+    fn sdl_to_egui_key_code(key: Keycode) -> Option<egui::Key> {
         Some(match key {
-            VirtualKeyCode::Down => Key::ArrowDown,
-            VirtualKeyCode::Left => Key::ArrowLeft,
-            VirtualKeyCode::Right => Key::ArrowRight,
-            VirtualKeyCode::Up => Key::ArrowUp,
-            VirtualKeyCode::Escape => Key::Escape,
-            VirtualKeyCode::Tab => Key::Tab,
-            VirtualKeyCode::Back => Key::Backspace,
-            VirtualKeyCode::Return => Key::Enter,
-            VirtualKeyCode::Space => Key::Space,
-            VirtualKeyCode::Insert => Key::Insert,
-            VirtualKeyCode::Delete => Key::Delete,
-            VirtualKeyCode::Home => Key::Home,
-            VirtualKeyCode::End => Key::End,
-            VirtualKeyCode::PageUp => Key::PageUp,
-            VirtualKeyCode::PageDown => Key::PageDown,
-            VirtualKeyCode::Key0 => Key::Num0,
-            VirtualKeyCode::Key1 => Key::Num1,
-            VirtualKeyCode::Key2 => Key::Num2,
-            VirtualKeyCode::Key3 => Key::Num3,
-            VirtualKeyCode::Key4 => Key::Num4,
-            VirtualKeyCode::Key5 => Key::Num5,
-            VirtualKeyCode::Key6 => Key::Num6,
-            VirtualKeyCode::Key7 => Key::Num7,
-            VirtualKeyCode::Key8 => Key::Num8,
-            VirtualKeyCode::Key9 => Key::Num9,
-            VirtualKeyCode::A => Key::A,
-            VirtualKeyCode::B => Key::B,
-            VirtualKeyCode::C => Key::C,
-            VirtualKeyCode::D => Key::D,
-            VirtualKeyCode::E => Key::E,
-            VirtualKeyCode::F => Key::F,
-            VirtualKeyCode::G => Key::G,
-            VirtualKeyCode::H => Key::H,
-            VirtualKeyCode::I => Key::I,
-            VirtualKeyCode::J => Key::J,
-            VirtualKeyCode::K => Key::K,
-            VirtualKeyCode::L => Key::L,
-            VirtualKeyCode::M => Key::M,
-            VirtualKeyCode::N => Key::N,
-            VirtualKeyCode::O => Key::O,
-            VirtualKeyCode::P => Key::P,
-            VirtualKeyCode::Q => Key::Q,
-            VirtualKeyCode::R => Key::R,
-            VirtualKeyCode::S => Key::S,
-            VirtualKeyCode::T => Key::T,
-            VirtualKeyCode::U => Key::U,
-            VirtualKeyCode::V => Key::V,
-            VirtualKeyCode::W => Key::W,
-            VirtualKeyCode::X => Key::X,
-            VirtualKeyCode::Y => Key::Y,
-            VirtualKeyCode::Z => Key::Z,
+            Keycode::Down => Key::ArrowDown,
+            Keycode::Left => Key::ArrowLeft,
+            Keycode::Right => Key::ArrowRight,
+            Keycode::Up => Key::ArrowUp,
+            Keycode::Escape => Key::Escape,
+            Keycode::Tab => Key::Tab,
+            Keycode::Backspace => Key::Backspace,
+            Keycode::Return => Key::Enter,
+            Keycode::Space => Key::Space,
+            Keycode::Insert => Key::Insert,
+            Keycode::Delete => Key::Delete,
+            Keycode::Home => Key::Home,
+            Keycode::End => Key::End,
+            Keycode::PageUp => Key::PageUp,
+            Keycode::PageDown => Key::PageDown,
+            Keycode::Num0 => Key::Num0,
+            Keycode::Num1 => Key::Num1,
+            Keycode::Num2 => Key::Num2,
+            Keycode::Num3 => Key::Num3,
+            Keycode::Num4 => Key::Num4,
+            Keycode::Num5 => Key::Num5,
+            Keycode::Num6 => Key::Num6,
+            Keycode::Num7 => Key::Num7,
+            Keycode::Num8 => Key::Num8,
+            Keycode::Num9 => Key::Num9,
+            Keycode::A => Key::A,
+            Keycode::B => Key::B,
+            Keycode::C => Key::C,
+            Keycode::D => Key::D,
+            Keycode::E => Key::E,
+            Keycode::F => Key::F,
+            Keycode::G => Key::G,
+            Keycode::H => Key::H,
+            Keycode::I => Key::I,
+            Keycode::J => Key::J,
+            Keycode::K => Key::K,
+            Keycode::L => Key::L,
+            Keycode::M => Key::M,
+            Keycode::N => Key::N,
+            Keycode::O => Key::O,
+            Keycode::P => Key::P,
+            Keycode::Q => Key::Q,
+            Keycode::R => Key::R,
+            Keycode::S => Key::S,
+            Keycode::T => Key::T,
+            Keycode::U => Key::U,
+            Keycode::V => Key::V,
+            Keycode::W => Key::W,
+            Keycode::X => Key::X,
+            Keycode::Y => Key::Y,
+            Keycode::Z => Key::Z,
             _ => return None,
         })
     }
 
-    fn winit_to_egui_modifiers(modifiers: ModifiersState) -> egui::Modifiers {
+    fn sdl_to_egui_modifiers(modifiers: sdl2::keyboard::Mod) -> egui::Modifiers {
+        use sdl2::keyboard::Mod;
         egui::Modifiers {
-            alt: modifiers.alt(),
-            ctrl: modifiers.ctrl(),
-            shift: modifiers.shift(),
-            #[cfg(target_os = "macos")]
-            mac_cmd: modifiers.logo(),
-            #[cfg(target_os = "macos")]
-            command: modifiers.logo(),
-            #[cfg(not(target_os = "macos"))]
+            alt: modifiers.intersects(Mod::LALTMOD | Mod::RALTMOD),
+            ctrl: modifiers.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD),
+            shift: modifiers.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD),
             mac_cmd: false,
-            #[cfg(not(target_os = "macos"))]
-            command: modifiers.ctrl(),
+            command: modifiers.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD),
         }
     }
 
-    fn winit_to_egui_mouse_button(
-        button: winit::event::MouseButton,
-    ) -> Option<egui::PointerButton> {
+    fn sdl_to_egui_mouse_button(button: sdl2::mouse::MouseButton) -> Option<egui::PointerButton> {
+        use sdl2::mouse::MouseButton;
         Some(match button {
-            winit::event::MouseButton::Left => egui::PointerButton::Primary,
-            winit::event::MouseButton::Right => egui::PointerButton::Secondary,
-            winit::event::MouseButton::Middle => egui::PointerButton::Middle,
+            MouseButton::Left => egui::PointerButton::Primary,
+            MouseButton::Right => egui::PointerButton::Secondary,
+            MouseButton::Middle => egui::PointerButton::Middle,
             _ => return None,
         })
     }
 
     /// Convert from [`egui::CursorIcon`] to [`winit::window::CursorIcon`].
-    fn egui_to_winit_cursor_icon(
-        cursor_icon: egui::CursorIcon,
-    ) -> Option<winit::window::CursorIcon> {
+    fn egui_to_sdl_cursor_icon(cursor_icon: egui::CursorIcon) -> Option<sdl2::mouse::SystemCursor> {
         Some(match cursor_icon {
-            egui::CursorIcon::Default => winit::window::CursorIcon::Default,
-            egui::CursorIcon::PointingHand => winit::window::CursorIcon::Hand,
-            egui::CursorIcon::ResizeHorizontal => winit::window::CursorIcon::ColResize,
-            egui::CursorIcon::ResizeNeSw => winit::window::CursorIcon::NeResize,
-            egui::CursorIcon::ResizeNwSe => winit::window::CursorIcon::NwResize,
-            egui::CursorIcon::ResizeVertical => winit::window::CursorIcon::RowResize,
-            egui::CursorIcon::Text => winit::window::CursorIcon::Text,
-            egui::CursorIcon::Grab => winit::window::CursorIcon::Grab,
-            egui::CursorIcon::Grabbing => winit::window::CursorIcon::Grabbing,
+            egui::CursorIcon::Default => sdl2::mouse::SystemCursor::Arrow,
+            egui::CursorIcon::PointingHand => sdl2::mouse::SystemCursor::Hand,
+            egui::CursorIcon::ResizeHorizontal => sdl2::mouse::SystemCursor::SizeWE,
+            egui::CursorIcon::ResizeNeSw => sdl2::mouse::SystemCursor::SizeNESW,
+            egui::CursorIcon::ResizeNwSe => sdl2::mouse::SystemCursor::SizeNWSE,
+            egui::CursorIcon::ResizeVertical => sdl2::mouse::SystemCursor::SizeNS,
+            egui::CursorIcon::Text => sdl2::mouse::SystemCursor::IBeam,
+            egui::CursorIcon::Grab => sdl2::mouse::SystemCursor::Hand,
+            egui::CursorIcon::Grabbing => sdl2::mouse::SystemCursor::Hand,
             egui::CursorIcon::None => return None,
-            egui::CursorIcon::ContextMenu => winit::window::CursorIcon::ContextMenu,
-            egui::CursorIcon::Help => winit::window::CursorIcon::Help,
-            egui::CursorIcon::Progress => winit::window::CursorIcon::Progress,
-            egui::CursorIcon::Wait => winit::window::CursorIcon::Wait,
-            egui::CursorIcon::Cell => winit::window::CursorIcon::Cell,
-            egui::CursorIcon::Crosshair => winit::window::CursorIcon::Crosshair,
-            egui::CursorIcon::VerticalText => winit::window::CursorIcon::VerticalText,
-            egui::CursorIcon::Alias => winit::window::CursorIcon::Alias,
-            egui::CursorIcon::Copy => winit::window::CursorIcon::Copy,
-            egui::CursorIcon::Move => winit::window::CursorIcon::Move,
-            egui::CursorIcon::NoDrop => winit::window::CursorIcon::NoDrop,
-            egui::CursorIcon::NotAllowed => winit::window::CursorIcon::NotAllowed,
-            egui::CursorIcon::AllScroll => winit::window::CursorIcon::AllScroll,
-            egui::CursorIcon::ZoomIn => winit::window::CursorIcon::ZoomIn,
-            egui::CursorIcon::ZoomOut => winit::window::CursorIcon::ZoomOut,
+            egui::CursorIcon::ContextMenu => sdl2::mouse::SystemCursor::Arrow,
+            egui::CursorIcon::Help => sdl2::mouse::SystemCursor::Arrow,
+            egui::CursorIcon::Progress => sdl2::mouse::SystemCursor::WaitArrow,
+            egui::CursorIcon::Wait => sdl2::mouse::SystemCursor::Wait,
+            egui::CursorIcon::Cell => sdl2::mouse::SystemCursor::Crosshair,
+            egui::CursorIcon::Crosshair => sdl2::mouse::SystemCursor::Crosshair,
+            egui::CursorIcon::VerticalText => sdl2::mouse::SystemCursor::IBeam,
+            egui::CursorIcon::Alias => sdl2::mouse::SystemCursor::Hand,
+            egui::CursorIcon::Copy => sdl2::mouse::SystemCursor::Arrow,
+            egui::CursorIcon::Move => sdl2::mouse::SystemCursor::SizeAll,
+            egui::CursorIcon::NoDrop => sdl2::mouse::SystemCursor::No,
+            egui::CursorIcon::NotAllowed => sdl2::mouse::SystemCursor::No,
+            egui::CursorIcon::AllScroll => sdl2::mouse::SystemCursor::Arrow,
+            egui::CursorIcon::ZoomIn => sdl2::mouse::SystemCursor::SizeAll,
+            egui::CursorIcon::ZoomOut => sdl2::mouse::SystemCursor::SizeAll,
         })
     }
 
@@ -815,35 +718,43 @@ impl Integration {
     }
 
     /// end frame.
-    pub fn end_frame(&mut self, window: &mut Window) -> (egui::Output, Vec<ClippedShape>) {
+    pub fn end_frame(
+        &mut self,
+        sdl_video: &sdl2::VideoSubsystem,
+    ) -> (
+        egui::Output,
+        Vec<ClippedShape>,
+        Option<sdl2::mouse::SystemCursor>,
+    ) {
         let (output, clipped_shapes) = self.context.end_frame();
 
         // handle links
         if let Some(egui::output::OpenUrl { url, .. }) = &output.open_url {
-            if let Err(err) = webbrowser::open(url) {
+            let _ = url;
+            // TODO(https://github.com/Rust-SDL2/rust-sdl2/issues/1119)
+            /*if let Err(err) = webbrowser::open(url) {
                 eprintln!("Failed to open url: {}", err);
-            }
+            }*/
         }
 
         // handle clipboard
         if !output.copied_text.is_empty() {
-            if let Err(err) = self.clipboard.set_contents(output.copied_text.clone()) {
-                eprintln!("Copy/Cut error: {}", err);
+            if let Err(err) = sdl_video
+                .clipboard()
+                .set_clipboard_text(&output.copied_text)
+            {
+                bxw_util::log::error!("Copy/Cut error: {}", err);
             }
         }
 
         // handle cursor icon
+        let mut cursor = None;
         if self.current_cursor_icon != output.cursor_icon {
-            if let Some(cursor_icon) = Integration::egui_to_winit_cursor_icon(output.cursor_icon) {
-                window.set_cursor_visible(true);
-                window.set_cursor_icon(cursor_icon);
-            } else {
-                window.set_cursor_visible(false);
-            }
+            cursor = Integration::egui_to_sdl_cursor_icon(output.cursor_icon);
             self.current_cursor_icon = output.cursor_icon;
         }
 
-        (output, clipped_shapes)
+        (output, clipped_shapes, cursor)
     }
 
     /// Get [`egui::CtxRef`].
@@ -855,75 +766,51 @@ impl Integration {
     pub fn paint(
         &mut self,
         command_buffer: vk::CommandBuffer,
-        index: usize,
         clipped_meshes: Vec<egui::ClippedMesh>,
+        fctx: &mut InPassFrameContext,
     ) {
         // update time
-        if let Some(time) = self.start_time {
-            self.raw_input.time = Some(time.elapsed().as_secs_f64());
-        } else {
-            self.start_time = Some(Instant::now());
-        }
-
+        self.raw_input.time = Some(self.raw_input.time.unwrap_or(0.0) + fctx.delta_time);
+        
         // update font texture
-        self.upload_font_texture(command_buffer, &self.context.fonts().texture());
+        self.upload_font_texture(command_buffer, &self.context.fonts().texture(), fctx.rctx);
+
+        let device = &fctx.rctx.handles.device;
 
         // map buffers
-        let mut vertex_buffer_ptr = self
-            .allocator
-            .map_memory(&self.vertex_buffer_allocations[index])
+        let vmalloc = fctx.rctx.handles.vmalloc.lock();
+        let mut vertex_buffer_ptr = vmalloc
+            .map_memory(&self.vertex_buffer_allocations[fctx.inflight_index])
             .expect("Failed to map buffers.");
         let vertex_buffer_ptr_end =
             unsafe { vertex_buffer_ptr.add(Self::vertex_buffer_size() as usize) };
-        let mut index_buffer_ptr = self
-            .allocator
-            .map_memory(&self.index_buffer_allocations[index])
+        let mut index_buffer_ptr = vmalloc
+            .map_memory(&self.index_buffer_allocations[fctx.inflight_index])
             .expect("Failed to map buffers.");
         let index_buffer_ptr_end =
             unsafe { index_buffer_ptr.add(Self::index_buffer_size() as usize) };
-
-        // begin render pass
-        unsafe {
-            self.device.cmd_begin_render_pass(
-                command_buffer,
-                &vk::RenderPassBeginInfo::builder()
-                    .render_pass(self.render_pass)
-                    .framebuffer(self.framebuffers[index])
-                    .clear_values(&[])
-                    .render_area(
-                        vk::Rect2D::builder()
-                            .extent(
-                                vk::Extent2D::builder()
-                                    .width(self.physical_width)
-                                    .height(self.physical_height)
-                                    .build(),
-                            )
-                            .build(),
-                    ),
-                vk::SubpassContents::INLINE,
-            );
-        }
+        drop(vmalloc);
 
         // bind resources
         unsafe {
-            self.device.cmd_bind_pipeline(
+            device.cmd_bind_pipeline(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
                 self.pipeline,
             );
-            self.device.cmd_bind_vertex_buffers(
+            device.cmd_bind_vertex_buffers(
                 command_buffer,
                 0,
-                &[self.vertex_buffers[index]],
+                &[self.vertex_buffers[fctx.inflight_index]],
                 &[0],
             );
-            self.device.cmd_bind_index_buffer(
+            device.cmd_bind_index_buffer(
                 command_buffer,
-                self.index_buffers[index],
+                self.index_buffers[fctx.inflight_index],
                 0,
                 vk::IndexType::UINT32,
             );
-            self.device.cmd_set_viewport(
+            device.cmd_set_viewport(
                 command_buffer,
                 0,
                 &[vk::Viewport::builder()
@@ -937,14 +824,14 @@ impl Integration {
             );
             let width_points = self.physical_width as f32 / self.scale_factor as f32;
             let height_points = self.physical_height as f32 / self.scale_factor as f32;
-            self.device.cmd_push_constants(
+            device.cmd_push_constants(
                 command_buffer,
                 self.pipeline_layout,
                 vk::ShaderStageFlags::VERTEX,
                 0,
                 bytes_of(&width_points),
             );
-            self.device.cmd_push_constants(
+            device.cmd_push_constants(
                 command_buffer,
                 self.pipeline_layout,
                 vk::ShaderStageFlags::VERTEX,
@@ -961,7 +848,7 @@ impl Integration {
             unsafe {
                 if let egui::TextureId::User(id) = mesh.texture_id {
                     if let Some(descriptor_set) = self.user_textures[id as usize] {
-                        self.device.cmd_bind_descriptor_sets(
+                        device.cmd_bind_descriptor_sets(
                             command_buffer,
                             vk::PipelineBindPoint::GRAPHICS,
                             self.pipeline_layout,
@@ -977,12 +864,12 @@ impl Integration {
                         continue;
                     }
                 } else {
-                    self.device.cmd_bind_descriptor_sets(
+                    device.cmd_bind_descriptor_sets(
                         command_buffer,
                         vk::PipelineBindPoint::GRAPHICS,
                         self.pipeline_layout,
                         0,
-                        &[self.font_descriptor_sets[index]],
+                        &[self.font_descriptor_sets[fctx.inflight_index]],
                         &[],
                     );
                 }
@@ -1036,7 +923,7 @@ impl Integration {
                     x: f32::clamp(max.x, min.x, self.physical_width as f32),
                     y: f32::clamp(max.y, min.y, self.physical_height as f32),
                 };
-                self.device.cmd_set_scissor(
+                device.cmd_set_scissor(
                     command_buffer,
                     0,
                     &[vk::Rect2D::builder()
@@ -1054,7 +941,7 @@ impl Integration {
                         )
                         .build()],
                 );
-                self.device.cmd_draw_indexed(
+                device.cmd_draw_indexed(
                     command_buffer,
                     mesh.indices.len() as u32,
                     1,
@@ -1068,44 +955,47 @@ impl Integration {
             index_base += mesh.indices.len() as u32;
         }
 
-        // end render pass
-        unsafe {
-            self.device.cmd_end_render_pass(command_buffer);
-        }
-
         // unmap buffers
-        self.allocator
+        let vmalloc = fctx.rctx.handles.vmalloc.lock();
+        vmalloc
             .flush_allocation(
-                &self.vertex_buffer_allocations[index],
+                &self.vertex_buffer_allocations[fctx.inflight_index],
                 0,
                 vk::WHOLE_SIZE as usize,
             )
             .expect("Failed to flush allocation.");
-        self.allocator
+        vmalloc
             .flush_allocation(
-                &self.index_buffer_allocations[index],
+                &self.index_buffer_allocations[fctx.inflight_index],
                 0,
                 vk::WHOLE_SIZE as usize,
             )
             .expect("Failed to flush allocation.");
-        self.allocator
-            .unmap_memory(&self.vertex_buffer_allocations[index])
+        vmalloc
+            .unmap_memory(&self.vertex_buffer_allocations[fctx.inflight_index])
             .expect("Failed to unmap memory.");
-        self.allocator
-            .unmap_memory(&self.index_buffer_allocations[index])
+        vmalloc
+            .unmap_memory(&self.index_buffer_allocations[fctx.inflight_index])
             .expect("Failed to unmap memory.");
     }
 
-    fn upload_font_texture(&mut self, command_buffer: vk::CommandBuffer, texture: &egui::Texture) {
-        debug_assert_eq!(texture.pixels.len(), texture.width * texture.height);
+    fn upload_font_texture(
+        &mut self,
+        command_buffer: vk::CommandBuffer,
+        texture: &egui::Texture,
+        rctx: &mut RenderingContext,
+    ) {
+        assert_eq!(texture.pixels.len(), texture.width * texture.height);
+        let device = &rctx.handles.device;
 
         // check version
         if texture.version == self.font_image_version {
             return;
         }
 
+        // FIXME: Use multiple images, gc the unused ones
         unsafe {
-            self.device
+            device
                 .device_wait_idle()
                 .expect("Failed to wait device idle");
         }
@@ -1117,8 +1007,9 @@ impl Integration {
             .flat_map(|&r| vec![r, r, r, r])
             .collect::<Vec<_>>();
 
+        let vmalloc = rctx.handles.vmalloc.lock();
         // free prev staging buffer
-        self.allocator
+        vmalloc
             .destroy_buffer(
                 self.font_image_staging_buffer,
                 &self.font_image_staging_buffer_allocation,
@@ -1127,15 +1018,14 @@ impl Integration {
 
         // free font image
         unsafe {
-            self.device.destroy_image_view(self.font_image_view, None);
+            device.destroy_image_view(self.font_image_view, None);
         }
-        self.allocator
+        vmalloc
             .destroy_image(self.font_image, &self.font_image_allocation)
             .expect("Failed to destroy image.");
 
         // create font image
-        let (font_image_staging_buffer, font_image_staging_buffer_allocation, _info) = self
-            .allocator
+        let (font_image_staging_buffer, font_image_staging_buffer_allocation, _info) = vmalloc
             .create_buffer(
                 &vk::BufferCreateInfo::builder()
                     .usage(vk::BufferUsageFlags::TRANSFER_SRC)
@@ -1151,8 +1041,7 @@ impl Integration {
             .expect("Failed to create buffer.");
         self.font_image_staging_buffer = font_image_staging_buffer;
         self.font_image_staging_buffer_allocation = font_image_staging_buffer_allocation;
-        let (font_image, font_image_allocation, _info) = self
-            .allocator
+        let (font_image, font_image_allocation, _info) = vmalloc
             .create_image(
                 &vk::ImageCreateInfo::builder()
                     .format(vk::Format::R8G8B8A8_UNORM)
@@ -1178,7 +1067,7 @@ impl Integration {
         self.font_image = font_image;
         self.font_image_allocation = font_image_allocation;
         self.font_image_view = unsafe {
-            self.device.create_image_view(
+            device.create_image_view(
                 &vk::ImageViewCreateInfo::builder()
                     .image(self.font_image)
                     .format(vk::Format::R8G8B8A8_UNORM)
@@ -1202,7 +1091,7 @@ impl Integration {
         // update descriptor set
         for &font_descriptor_set in self.font_descriptor_sets.iter() {
             unsafe {
-                self.device.update_descriptor_sets(
+                device.update_descriptor_sets(
                     &[vk::WriteDescriptorSet::builder()
                         .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                         .dst_set(font_descriptor_set)
@@ -1219,21 +1108,20 @@ impl Integration {
         }
 
         // map memory
-        let ptr = self
-            .allocator
+        let ptr = vmalloc
             .map_memory(&self.font_image_staging_buffer_allocation)
             .expect("Failed to map memory");
         unsafe {
             ptr.copy_from_nonoverlapping(data.as_ptr(), data.len());
         }
-        self.allocator
+        vmalloc
             .unmap_memory(&self.font_image_staging_buffer_allocation)
             .expect("Failed to map memory");
-
+        drop(vmalloc);
         // record buffer staging commands to command buffer
         unsafe {
             // update image layout to transfer dst optimal
-            self.device.cmd_pipeline_barrier(
+            device.cmd_pipeline_barrier(
                 command_buffer,
                 vk::PipelineStageFlags::HOST,
                 vk::PipelineStageFlags::TRANSFER,
@@ -1259,7 +1147,7 @@ impl Integration {
             );
 
             // copy staging buffer to image
-            self.device.cmd_copy_buffer_to_image(
+            device.cmd_copy_buffer_to_image(
                 command_buffer,
                 self.font_image_staging_buffer,
                 self.font_image,
@@ -1284,7 +1172,7 @@ impl Integration {
             );
 
             // update image layout to shader read only optimal
-            self.device.cmd_pipeline_barrier(
+            device.cmd_pipeline_barrier(
                 command_buffer,
                 vk::PipelineStageFlags::TRANSFER,
                 vk::PipelineStageFlags::ALL_GRAPHICS,
@@ -1311,263 +1199,6 @@ impl Integration {
         }
     }
 
-    /// Update swapchain.
-    pub fn update_swapchain(
-        &mut self,
-        physical_width: u32,
-        physical_height: u32,
-        swapchain: vk::SwapchainKHR,
-        surface_format: vk::SurfaceFormatKHR,
-    ) {
-        self.physical_width = physical_width;
-        self.physical_height = physical_height;
-
-        // release vk objects to be regenerated.
-        unsafe {
-            self.device.destroy_render_pass(self.render_pass, None);
-            self.device.destroy_pipeline(self.pipeline, None);
-            for &image_view in self.framebuffer_color_image_views.iter() {
-                self.device.destroy_image_view(image_view, None);
-            }
-            for &framebuffer in self.framebuffers.iter() {
-                self.device.destroy_framebuffer(framebuffer, None);
-            }
-        }
-
-        // swap images
-        let swap_images = unsafe { self.swapchain_loader.get_swapchain_images(swapchain) }
-            .expect("Failed to get swapchain images.");
-
-        // Recreate render pass for update surface format
-        self.render_pass = unsafe {
-            self.device.create_render_pass(
-                &vk::RenderPassCreateInfo::builder()
-                    .attachments(&[vk::AttachmentDescription::builder()
-                        .format(surface_format.format)
-                        .samples(vk::SampleCountFlags::TYPE_1)
-                        .load_op(vk::AttachmentLoadOp::LOAD)
-                        .store_op(vk::AttachmentStoreOp::STORE)
-                        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-                        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-                        .initial_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-                        .build()])
-                    .subpasses(&[vk::SubpassDescription::builder()
-                        .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-                        .color_attachments(&[vk::AttachmentReference::builder()
-                            .attachment(0)
-                            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                            .build()])
-                        .build()])
-                    .dependencies(&[vk::SubpassDependency::builder()
-                        .src_subpass(vk::SUBPASS_EXTERNAL)
-                        .dst_subpass(0)
-                        .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
-                        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
-                        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-                        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-                        .build()]),
-                None,
-            )
-        }
-        .expect("Failed to create render pass.");
-
-        // Recreate pipeline for update render pass
-        self.pipeline = {
-            let bindings = [vk::VertexInputBindingDescription::builder()
-                .binding(0)
-                .input_rate(vk::VertexInputRate::VERTEX)
-                .stride(5 * std::mem::size_of::<f32>() as u32)
-                .build()];
-            let attributes = [
-                // position
-                vk::VertexInputAttributeDescription::builder()
-                    .binding(0)
-                    .offset(0)
-                    .location(0)
-                    .format(vk::Format::R32G32_SFLOAT)
-                    .build(),
-                // uv
-                vk::VertexInputAttributeDescription::builder()
-                    .binding(0)
-                    .offset(8)
-                    .location(1)
-                    .format(vk::Format::R32G32_SFLOAT)
-                    .build(),
-                // color
-                vk::VertexInputAttributeDescription::builder()
-                    .binding(0)
-                    .offset(16)
-                    .location(2)
-                    .format(vk::Format::R8G8B8A8_UNORM)
-                    .build(),
-            ];
-
-            let vertex_shader_module = {
-                let bytes_code = include_bytes!("shaders/spv/vert.spv");
-                let shader_module_create_info = vk::ShaderModuleCreateInfo {
-                    code_size: bytes_code.len(),
-                    p_code: bytes_code.as_ptr() as *const u32,
-                    ..Default::default()
-                };
-                unsafe {
-                    self.device
-                        .create_shader_module(&shader_module_create_info, None)
-                }
-                .expect("Failed to create vertex shader module.")
-            };
-            let fragment_shader_module = {
-                let bytes_code = include_bytes!("shaders/spv/frag.spv");
-                let shader_module_create_info = vk::ShaderModuleCreateInfo {
-                    code_size: bytes_code.len(),
-                    p_code: bytes_code.as_ptr() as *const u32,
-                    ..Default::default()
-                };
-                unsafe {
-                    self.device
-                        .create_shader_module(&shader_module_create_info, None)
-                }
-                .expect("Failed to create fragment shader module.")
-            };
-            let main_function_name = CString::new("main").unwrap();
-            let pipeline_shader_stages = [
-                vk::PipelineShaderStageCreateInfo::builder()
-                    .stage(vk::ShaderStageFlags::VERTEX)
-                    .module(vertex_shader_module)
-                    .name(&main_function_name)
-                    .build(),
-                vk::PipelineShaderStageCreateInfo::builder()
-                    .stage(vk::ShaderStageFlags::FRAGMENT)
-                    .module(fragment_shader_module)
-                    .name(&main_function_name)
-                    .build(),
-            ];
-
-            let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
-                .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
-            let viewport_info = vk::PipelineViewportStateCreateInfo::builder()
-                .viewport_count(1)
-                .scissor_count(1);
-            let rasterization_info = vk::PipelineRasterizationStateCreateInfo::builder()
-                .depth_clamp_enable(false)
-                .rasterizer_discard_enable(false)
-                .polygon_mode(vk::PolygonMode::FILL)
-                .cull_mode(vk::CullModeFlags::NONE)
-                .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
-                .depth_bias_enable(false)
-                .line_width(1.0);
-            let stencil_op = vk::StencilOpState::builder()
-                .fail_op(vk::StencilOp::KEEP)
-                .pass_op(vk::StencilOp::KEEP)
-                .compare_op(vk::CompareOp::ALWAYS)
-                .build();
-            let depth_stencil_info = vk::PipelineDepthStencilStateCreateInfo::builder()
-                .depth_test_enable(true)
-                .depth_write_enable(true)
-                .depth_compare_op(vk::CompareOp::LESS_OR_EQUAL)
-                .depth_bounds_test_enable(false)
-                .stencil_test_enable(false)
-                .front(stencil_op)
-                .back(stencil_op);
-            let color_blend_attachments = [vk::PipelineColorBlendAttachmentState::builder()
-                .color_write_mask(
-                    vk::ColorComponentFlags::R
-                        | vk::ColorComponentFlags::G
-                        | vk::ColorComponentFlags::B
-                        | vk::ColorComponentFlags::A,
-                )
-                .blend_enable(true)
-                .src_color_blend_factor(vk::BlendFactor::ONE)
-                .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-                .build()];
-            let color_blend_info = vk::PipelineColorBlendStateCreateInfo::builder()
-                .attachments(&color_blend_attachments);
-            let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-            let dynamic_state_info =
-                vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
-            let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder()
-                .vertex_attribute_descriptions(&attributes)
-                .vertex_binding_descriptions(&bindings);
-            let multisample_info = vk::PipelineMultisampleStateCreateInfo::builder()
-                .rasterization_samples(vk::SampleCountFlags::TYPE_1);
-
-            let pipeline_create_info = [vk::GraphicsPipelineCreateInfo::builder()
-                .stages(&pipeline_shader_stages)
-                .vertex_input_state(&vertex_input_state)
-                .input_assembly_state(&input_assembly_info)
-                .viewport_state(&viewport_info)
-                .rasterization_state(&rasterization_info)
-                .multisample_state(&multisample_info)
-                .depth_stencil_state(&depth_stencil_info)
-                .color_blend_state(&color_blend_info)
-                .dynamic_state(&dynamic_state_info)
-                .layout(self.pipeline_layout)
-                .render_pass(self.render_pass)
-                .subpass(0)
-                .build()];
-
-            let pipeline = unsafe {
-                self.device.create_graphics_pipelines(
-                    vk::PipelineCache::null(),
-                    &pipeline_create_info,
-                    None,
-                )
-            }
-            .expect("Failed to create graphics pipeline")[0];
-            unsafe {
-                self.device
-                    .destroy_shader_module(vertex_shader_module, None);
-                self.device
-                    .destroy_shader_module(fragment_shader_module, None);
-            }
-            pipeline
-        };
-
-        // Recreate color image views for new framebuffers
-        self.framebuffer_color_image_views = swap_images
-            .iter()
-            .map(|swapchain_image| unsafe {
-                self.device
-                    .create_image_view(
-                        &vk::ImageViewCreateInfo::builder()
-                            .image(swapchain_image.clone())
-                            .view_type(vk::ImageViewType::TYPE_2D)
-                            .format(surface_format.format)
-                            .subresource_range(
-                                vk::ImageSubresourceRange::builder()
-                                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                                    .base_mip_level(0)
-                                    .level_count(1)
-                                    .base_array_layer(0)
-                                    .layer_count(1)
-                                    .build(),
-                            ),
-                        None,
-                    )
-                    .expect("Failed to create image view.")
-            })
-            .collect::<Vec<_>>();
-        // Recreate framebuffers for new swapchain
-        self.framebuffers = self
-            .framebuffer_color_image_views
-            .iter()
-            .map(|&image_views| unsafe {
-                let attachments = &[image_views];
-                self.device
-                    .create_framebuffer(
-                        &vk::FramebufferCreateInfo::builder()
-                            .render_pass(self.render_pass)
-                            .attachments(attachments)
-                            .width(physical_width)
-                            .height(physical_height)
-                            .layers(1),
-                        None,
-                    )
-                    .expect("Failed to create framebuffer.")
-            })
-            .collect::<Vec<_>>();
-    }
-
     /// Registering user texture.
     ///
     /// Pass the Vulkan ImageView and Sampler.
@@ -1584,6 +1215,7 @@ impl Integration {
         &mut self,
         image_view: vk::ImageView,
         sampler: vk::Sampler,
+        rctx: &mut RenderingContext,
     ) -> egui::TextureId {
         // get texture id
         let mut id = None;
@@ -1602,7 +1234,7 @@ impl Integration {
         // allocate and update descriptor set
         let layouts = [self.user_texture_layout];
         let descriptor_set = unsafe {
-            self.device.allocate_descriptor_sets(
+            rctx.handles.device.allocate_descriptor_sets(
                 &vk::DescriptorSetAllocateInfo::builder()
                     .descriptor_pool(self.descriptor_pool)
                     .set_layouts(&layouts),
@@ -1610,7 +1242,7 @@ impl Integration {
         }
         .expect("Failed to create descriptor sets.")[0];
         unsafe {
-            self.device.update_descriptor_sets(
+            rctx.handles.device.update_descriptor_sets(
                 &[vk::WriteDescriptorSet::builder()
                     .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                     .dst_set(descriptor_set)
@@ -1637,11 +1269,16 @@ impl Integration {
     /// Unregister user texture.
     ///
     /// The internal texture (egui::TextureId::Egui) cannot be unregistered.
-    pub fn unregister_user_texture(&mut self, texture_id: egui::TextureId) {
+    pub fn unregister_user_texture(
+        &mut self,
+        texture_id: egui::TextureId,
+        rctx: &mut RenderingContext,
+    ) {
         if let egui::TextureId::User(id) = texture_id {
             if let Some(descriptor_set) = self.user_textures[id as usize] {
                 unsafe {
-                    self.device
+                    rctx.handles
+                        .device
                         .free_descriptor_sets(self.descriptor_pool, &[descriptor_set])
                         .expect("Failed to free descriptor sets.");
                 }
@@ -1649,53 +1286,44 @@ impl Integration {
             }
         } else {
             eprintln!("The internal texture cannot be unregistered; please pass the texture ID of UserTexture.");
-            return;
         }
     }
 
     /// destroy vk objects.
     ///
-    /// # Unsafe
+    /// # Safety
     /// This method release vk objects memory that is not managed by Rust.
-    pub unsafe fn destroy(&mut self) {
-        self.device
-            .destroy_descriptor_set_layout(self.user_texture_layout, None);
-        self.device.destroy_image_view(self.font_image_view, None);
-        self.allocator
+    pub unsafe fn destroy(&mut self, rctx: &mut RenderingContext) {
+        let device = &rctx.handles.device;
+        device.destroy_descriptor_set_layout(self.user_texture_layout, None);
+        device.destroy_image_view(self.font_image_view, None);
+        let vmalloc = rctx.handles.vmalloc.lock();
+        vmalloc
             .destroy_image(self.font_image, &self.font_image_allocation)
             .expect("Failed to destroy image.");
-        self.allocator
+        vmalloc
             .destroy_buffer(
                 self.font_image_staging_buffer,
                 &self.font_image_staging_buffer_allocation,
             )
             .expect("Failed to destroy buffer.");
         for i in 0..self.index_buffers.len() {
-            self.allocator
+            vmalloc
                 .destroy_buffer(self.index_buffers[i], &self.index_buffer_allocations[i])
                 .expect("Failed to destroy index buffer.");
         }
         for i in 0..self.vertex_buffers.len() {
-            self.allocator
+            vmalloc
                 .destroy_buffer(self.vertex_buffers[i], &self.vertex_buffer_allocations[i])
                 .expect("Failed to destroy vertex buffer.");
         }
-        for &image_view in self.framebuffer_color_image_views.iter() {
-            self.device.destroy_image_view(image_view, None);
-        }
-        for &framebuffer in self.framebuffers.iter() {
-            self.device.destroy_framebuffer(framebuffer, None);
-        }
-        self.device.destroy_render_pass(self.render_pass, None);
-        self.device.destroy_sampler(self.sampler, None);
-        self.device.destroy_pipeline(self.pipeline, None);
-        self.device
-            .destroy_pipeline_layout(self.pipeline_layout, None);
+        drop(vmalloc);
+        device.destroy_sampler(self.sampler, None);
+        device.destroy_pipeline(self.pipeline, None);
+        device.destroy_pipeline_layout(self.pipeline_layout, None);
         for &descriptor_set_layout in self.descriptor_set_layouts.iter() {
-            self.device
-                .destroy_descriptor_set_layout(descriptor_set_layout, None);
+            device.destroy_descriptor_set_layout(descriptor_set_layout, None);
         }
-        self.device
-            .destroy_descriptor_pool(self.descriptor_pool, None);
+        device.destroy_descriptor_pool(self.descriptor_pool, None);
     }
 }

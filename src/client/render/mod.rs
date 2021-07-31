@@ -1,4 +1,5 @@
 pub mod atmorender;
+pub mod egui_ash_sdl;
 pub mod resources;
 pub mod ui;
 pub mod vkhelpers;
