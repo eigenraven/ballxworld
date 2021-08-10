@@ -264,7 +264,7 @@ fn wds_worker(data: WDSWorkerData) {
                     ChunkIoRequestKind::TryRead => {
                         for r in requests {
                             if let ChunkIoRequest::TryRead { mut positions } = r {
-                                read_chunk_data_buf.extend(positions.drain(..));
+                                read_chunk_data_buf.append(&mut positions);
                             } else {
                                 unreachable!();
                             }
@@ -300,7 +300,7 @@ fn wds_worker(data: WDSWorkerData) {
                                         .iter()
                                         .map(|(p, _, _)| ChunkIoResponse::WriteOk { cpos: *p }),
                                 );
-                                store_chunk_data_buf.extend(positions.drain(..));
+                                store_chunk_data_buf.append(&mut positions);
                             } else {
                                 unreachable!();
                             }

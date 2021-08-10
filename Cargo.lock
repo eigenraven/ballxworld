@@ -134,7 +134,6 @@ dependencies = [
  "serde",
  "tokio",
  "vk-mem",
- "vk-sync",
 ]
 
 [[package]]
@@ -1709,13 +1708,6 @@ dependencies = [
  "ash",
  "bitflags",
  "cc",
-]
-
-[[package]]
-name = "vk-sync"
-version = "0.1.6"
-dependencies = [
- "ash",
 ]
 
 [[package]]
