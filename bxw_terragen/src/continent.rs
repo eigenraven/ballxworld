@@ -95,8 +95,8 @@ impl rstar::RTreeParams for OptRTreeParams {
 }
 
 pub type OptRTree<T> = rstar::RTree<T, OptRTreeParams>;
-type RTreePoint2 = rstar::primitives::PointWithData<(), [f64; 2]>;
-type RTreeIdxPoint2 = rstar::primitives::PointWithData<usize, [f64; 2]>;
+type RTreePoint2 = rstar::primitives::GeomWithData<[f64; 2], ()>;
+type RTreeIdxPoint2 = rstar::primitives::GeomWithData<[f64; 2], usize>;
 type WipBiomeData<'a> = (
     ContinentTilePosition,
     &'a mut [BiomeCentroid],
@@ -118,7 +118,7 @@ fn poisson_disc_sampling<Dist: Distribution<f64> + Copy>(
     let start_p = start_p.map(|p| p.max(1.0).min(continent_size - 1.0));
     let mut points: RTree<RTreePoint2> = RTree::new();
     let mut active_set: Vec<Vector2<f64>> = Vec::with_capacity(32);
-    points.insert(RTreePoint2::new((), start_p.into()));
+    points.insert(RTreePoint2::new(start_p.into(), ()));
     active_set.push(start_p);
     while !active_set.is_empty() {
         let active_dist = rand::distributions::Uniform::new(0, active_set.len());
@@ -143,7 +143,7 @@ fn poisson_disc_sampling<Dist: Distribution<f64> + Copy>(
             } else {
                 found = true;
                 active_set.push(newpoint);
-                points.insert(RTreePoint2::new((), newpoint.into()));
+                points.insert(RTreePoint2::new(newpoint.into(), ()));
             }
         }
         if !found {
@@ -235,14 +235,14 @@ fn generate_biome_points(
     )
     .iter()
     .map(|p| BiomeCentroid {
-        position: Vector2::from(*p.position()),
+        position: Vector2::from(*p.geom()),
         ..Default::default()
     })
     .collect();
     let tree_load_vec: Vec<_> = disc_points
         .iter()
         .enumerate()
-        .map(|(i, p)| RTreeIdxPoint2::new(i, p.position.into()))
+        .map(|(i, p)| RTreeIdxPoint2::new(p.position.into(), i))
         .collect();
     let point_tree = OptRTree::bulk_load_with_params(tree_load_vec);
     let neighbor_max_distance = 1.1 * biome_avg_distance;
