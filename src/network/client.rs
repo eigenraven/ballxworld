@@ -1,19 +1,20 @@
 use crate::config::ConfigHandle;
-use crate::network::get_tokio_runtime;
 use crate::network::packets;
 use crate::network::packets::auth::{ClientConnectionType, ConnectionResponse};
 use crate::network::protocol::{
-    authflow_client_handshake_packet, authflow_client_try_accept_handshake_ack,
+    authflow_client_handshake_packet, authflow_client_try_accept_handshake_ack, PacketStream,
+    PacketV1, NET_KEEPALIVE_INTERVAL,
 };
+use bxw_util::flume;
 use bxw_util::log;
 use bxw_util::sodiumoxide::crypto::box_;
+use num_enum::{FromPrimitive, IntoPrimitive};
+use std::io::ErrorKind;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time;
-use tokio::net;
-use tokio::sync::broadcast;
-use tokio::time::timeout_at;
 
 #[derive(Debug)]
 pub enum ClientCreationError {
@@ -31,70 +32,91 @@ pub enum ClientCreationError {
 #[derive(Clone, Debug, Hash)]
 pub enum ClientControlMessage {
     Disconnect,
+    SendChat(String),
 }
 
-pub struct NetClient {
+pub struct ClientConfig {
+    pub id_keys: (box_::PublicKey, box_::SecretKey),
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct ServerDetails {
+    pub name: String,
+    pub address: SocketAddr,
+}
+
+#[repr(u32)]
+#[derive(
+    FromPrimitive, IntoPrimitive, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash,
+)]
+pub enum ClientConnectionState {
+    #[default]
+    Unknown,
+    StartingThread,
+    SendingHandshake1,
+    WaitingForHandshakeAck,
+    Connected,
+    Shutdown,
+}
+
+pub struct ClientSharedData {
+    server: Arc<ServerDetails>,
+    config: Arc<ClientConfig>,
+    connection_state: AtomicU32,
+    ms_since_last_recv: AtomicU32,
+    ms_since_last_send: AtomicU32,
+}
+
+pub struct Client {
     client_thread: thread::JoinHandle<()>,
-    client_control: broadcast::Sender<ClientControlMessage>,
-    shared_state: Arc<NetClientSharedState>,
+    client_control: flume::Sender<ClientControlMessage>,
+    shared_data: Arc<ClientSharedData>,
 }
 
-pub struct NetClientSharedState {
-    client_id_keys: (box_::PublicKey, box_::SecretKey),
-    server_address: SocketAddr,
-}
+const CLIENT_CONTROL_CHANNEL_BOUND: usize = 256;
 
-impl NetClientSharedState {
+impl Client {
     pub fn new(
-        client_id_keys: (box_::PublicKey, box_::SecretKey),
-        server_address: SocketAddr,
-    ) -> Self {
-        Self {
-            client_id_keys,
-            server_address,
-        }
-    }
-}
-
-const CLIENT_CONTROL_CHANNEL_BOUND: usize = 1024;
-
-impl NetClient {
-    pub fn new(cfg: ConfigHandle, address: &SocketAddr) -> Result<Self, ClientCreationError> {
-        let tokrt = get_tokio_runtime(Some(cfg.clone()));
-        let (ccon_tx, ccon_rx) = broadcast::channel(CLIENT_CONTROL_CHANNEL_BOUND);
-        drop(ccon_rx);
-        let ccon_tx2 = ccon_tx.clone();
+        cfg: ConfigHandle,
+        ccfg: Arc<ClientConfig>,
+        server: Arc<ServerDetails>,
+    ) -> Result<Self, ClientCreationError> {
+        let (ccon_tx, ccon_rx) = flume::bounded(CLIENT_CONTROL_CHANNEL_BOUND);
         use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
-        let bindaddr = match address {
+        let bindaddr = match &server.address {
             SocketAddr::V4(_) => SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
             SocketAddr::V6(_) => SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
         };
         let socket = std::net::UdpSocket::bind(bindaddr)
             .map_err(|error| ClientCreationError::SocketConnectionError { error })?;
         socket
-            .connect(address)
+            .connect(server.address)
             .map_err(|error| ClientCreationError::SocketConnectionError { error })?;
         socket
-            .set_nonblocking(true)
+            .set_nonblocking(false)
             .map_err(|error| ClientCreationError::SocketConnectionError { error })?;
         // TODO: Save/load identifying keys
-        let shared_state = Arc::new(NetClientSharedState::new(box_::gen_keypair(), *address));
-        let shared_state_copy = Arc::clone(&shared_state);
+        let shared_data = Arc::new(ClientSharedData {
+            server,
+            config: ccfg,
+            connection_state: AtomicU32::new(ClientConnectionState::StartingThread.into()),
+            ms_since_last_recv: AtomicU32::new(0),
+            ms_since_last_send: AtomicU32::new(0),
+        });
+        let shared_state_copy = Arc::clone(&shared_data);
         let client_thread = thread::Builder::new()
-            .name("bxw-client-netio-main".to_owned())
+            .name("bxw-client-netio".to_owned())
             .stack_size(2 * 1024 * 1024)
             .spawn(move || {
-                tokrt.block_on(async move {
-                    if let Err(e) = client_netmain(cfg, ccon_tx2, socket, shared_state_copy).await {
-                        log::error!("Client netmain terminated with error: {:?}", e);
-                    }
-                });
+                if let Err(e) = client_netmain(cfg, ccon_rx, socket, shared_state_copy) {
+                    log::error!("Client netmain terminated with error: {:?}", e);
+                }
             })
             .expect("Couldn't start main client network thread");
         Ok(Self {
             client_thread,
             client_control: ccon_tx,
-            shared_state,
+            shared_data,
         })
     }
 
@@ -120,63 +142,84 @@ impl NetClient {
 const NET_CLIENT_CONNECTION_RETRIES: u32 = 5;
 /// Effective timeout is this multiplied by `NET_CLIENT_CONNECTION_RETRIES`
 const NET_CLIENT_CONNECTION_HANDSHAKE_TIMEOUT: time::Duration = time::Duration::from_millis(500);
+const NET_CLIENT_CONNECTION_TIMEOUT: time::Duration = time::Duration::from_secs(15);
+/// How often the control message queue is checked if there's no network traffic,
+/// in practice the timeout to recvfrom in the network thread.
+const NET_CLIENT_POLL_MQ_INTERVAL: time::Duration = time::Duration::from_millis(5);
 
-async fn client_netmain(
+fn client_netmain(
     cfg: ConfigHandle,
-    control: broadcast::Sender<ClientControlMessage>,
+    control: flume::Receiver<ClientControlMessage>,
     socket: std::net::UdpSocket,
-    shared_state: Arc<NetClientSharedState>,
+    shared_data: Arc<ClientSharedData>,
 ) -> std::io::Result<()> {
-    let socket = Arc::new(net::UdpSocket::from_std(socket).unwrap());
-    let mtu = cfg.read().server_mtu;
-    let mut _control_rx = control.subscribe();
-    let mut msgbuf = vec![0u8; mtu as usize * 2];
+    socket.set_read_timeout(Some(NET_CLIENT_POLL_MQ_INTERVAL))?;
+    socket.set_write_timeout(Some(NET_CLIENT_POLL_MQ_INTERVAL))?;
+    let mut recvbuf: Box<[u8; 65536]> = bxw_util::bytemuck::zeroed_box();
     log::info!(
         "Attempting connection to {:?} from {:?}",
-        shared_state.server_address,
+        shared_data.server.address,
         socket.local_addr()
     );
     let (hs0pkt, hs0state) = authflow_client_handshake_packet(
-        &shared_state.client_id_keys.0,
+        &shared_data.config.id_keys.0,
         ClientConnectionType::GameClient,
     )
     .expect("Couldn't encode handshake packet");
     let mut hs0resp = None;
-    'hsloop: for _retries in 0..NET_CLIENT_CONNECTION_RETRIES {
-        socket.send(&hs0pkt).await?;
+    'handshake_retries: for _retries in 0..NET_CLIENT_CONNECTION_RETRIES {
+        socket.send(&hs0pkt)?;
         let sendtime = time::Instant::now();
-        let timeout_t = sendtime + NET_CLIENT_CONNECTION_HANDSHAKE_TIMEOUT;
+        let timeout = sendtime + NET_CLIENT_CONNECTION_HANDSHAKE_TIMEOUT;
         loop {
-            match timeout_at(timeout_t.into(), socket.recv(&mut msgbuf)).await {
-                Err(_) => {
-                    break;
+            match socket.recv(&mut recvbuf[..]) {
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        ErrorKind::TimedOut | ErrorKind::WouldBlock | ErrorKind::Interrupted
+                    ) => {}
+                Err(e) => {
+                    return Err(e);
                 }
                 Ok(bytes_received) => {
-                    let msg = &msgbuf[0..bytes_received?];
+                    let msg = &recvbuf[0..bytes_received];
                     match authflow_client_try_accept_handshake_ack(
                         &hs0state,
                         msg,
-                        (
-                            &shared_state.client_id_keys.0,
-                            &shared_state.client_id_keys.1,
-                        ),
+                        (&shared_data.config.id_keys.0, &shared_data.config.id_keys.1),
                     ) {
                         Ok(resp) => {
                             hs0resp = Some(resp);
-                            break 'hsloop;
+                            break 'handshake_retries;
                         }
                         Err(err) => {
                             // could be spoofed packets, so just ignore them (but log)
-                            log::warn!("Potential spoofed/wrong packed during handshake -- error code: {:?}", err);
+                            log::warn!("Potential spoofed/wrong packed during network handshake -- error code: {:?}", err);
                             continue;
                         }
                     }
                 }
             }
+            if time::Instant::now() >= timeout {
+                break;
+            }
+            if control.is_disconnected() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "Connection to server cancelled",
+                ));
+            }
+            while let Ok(msg) = control.try_recv() {
+                if let ClientControlMessage::Disconnect = msg {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "Connection to server cancelled",
+                    ));
+                }
+            }
         }
     }
-    drop(hs0pkt);
-    drop(hs0state);
+    drop((hs0pkt, hs0state));
     let (connresp, cccstate) = hs0resp.ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::TimedOut,
@@ -190,69 +233,100 @@ async fn client_netmain(
             "Server didn't accept connection, check log for details",
         ));
     }
+    let mut current_server_address = shared_data.server.address;
     log::info!(
         "Connected to server at {:?}: Name(`{}`), Version({}), ID({})",
-        shared_state.server_address,
+        shared_data.server.address,
         &cccstate.server_name,
         &cccstate.server_version_id,
         bxw_util::sodiumoxide::hex::encode(&cccstate.server_id)
     );
-    /*'sockloop: loop {
-        tokio::select! {
-            ctrl_msg = control_rx.recv() => {
-                use broadcast::error::RecvError;
-                match ctrl_msg {
-                    Ok(msg) => {
-                        match msg {
-                            ServerControlMessage::Stop => {
-                                break 'sockloop;
-                            }
-                        }
-                    }
-                    Err(RecvError::Closed) => {
-                        break 'sockloop;
-                    }
-                    Err(RecvError::Lagged(n)) => {
-                        log::error!("Client socket handler lagged {} control messages!", n);
-                    }
+    let mut last_recv_time = time::Instant::now();
+    let mut last_send_time = last_recv_time;
+    let mut send_keepalive = true;
+    // Main network loop
+    'netloop: loop {
+        if control.is_disconnected() {
+            break;
+        }
+        while let Ok(msg) = control.try_recv() {
+            match msg {
+                ClientControlMessage::Disconnect => {
+                    break 'netloop;
                 }
+                ClientControlMessage::SendChat(_) => todo!(),
             }
-            recv_result = sock.recv_from(&mut msgbuf) => {
-                let (pkt_len, pkt_src_addr) = recv_result?;
-                if pkt_len > msgbuf.len() || pkt_len < 32 {
-                    continue 'sockloop;
+        }
+        {
+            let now = time::Instant::now();
+            let since_recv = now - last_recv_time;
+            let since_send = now - last_send_time;
+            // monitoring only, so can be relaxed
+            shared_data.ms_since_last_recv.store(
+                since_recv.as_millis().max(u32::MAX as u128) as u32,
+                Ordering::Relaxed,
+            );
+            shared_data.ms_since_last_send.store(
+                since_send.as_millis().max(u32::MAX as u128) as u32,
+                Ordering::Relaxed,
+            );
+            if since_recv >= NET_CLIENT_CONNECTION_TIMEOUT {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "Server connection timed out",
+                ));
+            }
+            if since_send >= NET_KEEPALIVE_INTERVAL {
+                send_keepalive = true;
+            }
+        }
+        if send_keepalive {
+            // TODO: Keepalive/ACK vectors
+        }
+        match socket.recv_from(&mut recvbuf[..]) {
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    ErrorKind::TimedOut | ErrorKind::WouldBlock | ErrorKind::Interrupted
+                ) => {}
+            Err(e) => {
+                // TODO: Resilient error handling
+                return Err(e);
+            }
+            Ok((bytes_received, received_from)) => {
+                let msg = &recvbuf[0..bytes_received];
+                if msg.len() < 32 {
+                    continue;
                 }
-                let pkt_data_ref: &[u8] = &msgbuf[0 .. pkt_len];
-                let pkt_src: (usize, std::net::SocketAddr) = (sid, pkt_src_addr);
-                let conn = conntable.entry(pkt_src.1);
-                let mut processed = false;
-                if let std::collections::hash_map::Entry::Occupied(conn) = conn {
-                    match conn.get().try_send(RawPacket{source: pkt_src, data: Box::from(pkt_data_ref)}) {
-                        Ok(()) => {processed = true;}
-                        Err(mpsc::error::TrySendError::Closed(_)) => {
-                            conn.remove_entry();
+                let pkt = match PacketV1::decode_established(msg, &cccstate.rx_key) {
+                    Ok(pkt) => {
+                        last_recv_time = time::Instant::now();
+                        if current_server_address != received_from {
+                            log::warn!(
+                                "Server address changed to {:?} from {:?}",
+                                received_from,
+                                current_server_address
+                            );
+                            current_server_address = received_from;
                         }
-                        Err(mpsc::error::TrySendError::Full(_)) => {
-                            log::warn!("Clientside packet handler lagging behind on packet processing (on incoming packet from {:?})", pkt_src);
-                            processed = true;
-                        }
+                        pkt
                     }
-                }
-                if !processed {
-                    let shs1 = match protocol::authflow_server_try_accept_handshake_packet(pkt_data_ref) {
-                        Ok(x) => x,
-                        Err(_) => continue 'sockloop
-                    };
-                    let (packets_tx, packets_rx) = mpsc::channel(SERVER_PACKET_CHANNEL_BOUND);
-                    let shared_state_clone = shared_state.clone();
-                    let sock_clone = sock.clone();
-                    conntable.insert(pkt_src_addr, packets_tx);
-                    shared_state.connection_raw_count.fetch_add(1, SeqCst);
-                    tokio::spawn(async move {server_connection_handler(pkt_src, shs1, packets_rx, shared_state_clone, sock_clone).await});
+                    Err(e) => {
+                        //TODO:Slow warns
+                        log::warn!("Packet processing error {:?}", e);
+                        continue;
+                    }
+                };
+                match pkt.stream {
+                    PacketStream::Handshake => { /* ignore */ }
+                    PacketStream::ConnectionControl => {
+                        //
+                    }
+                    _ => { /* hand-off to game processing */ }
                 }
             }
         }
-    }*/
+    }
     log::info!("Client socket handler terminating");
     Ok(())
 }

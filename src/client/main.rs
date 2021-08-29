@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 use crate::client::render::voxrender::MeshDataHandler;
 use crate::client::screens::player_inventory::UiPlayerInventory;
 use crate::client::screens::UiScreen;
-use crate::network::client::{ClientControlMessage, NetClient};
+use crate::network::client::{Client, ClientConfig, ClientControlMessage, ServerDetails};
 use bxw_util::change::Change;
 use bxw_util::collider::AABB;
 use bxw_util::direction::OctahedralOrientation;
@@ -142,7 +142,17 @@ pub fn client_main() {
 
     let netclient = if use_netclient {
         let addr = std::net::SocketAddr::V4("127.0.0.1:20138".parse().unwrap());
-        Some(NetClient::new(cfg.clone(), &addr).expect("Couldn't create netclient"))
+        let ccfg = ClientConfig {
+            id_keys: sodiumoxide::crypto::box_::gen_keypair(),
+        };
+        let server = ServerDetails {
+            name: "Server".to_owned(),
+            address: addr,
+        };
+        Some(
+            Client::new(cfg.clone(), Arc::new(ccfg), Arc::new(server))
+                .expect("Couldn't create netclient"),
+        )
     } else {
         None
     };

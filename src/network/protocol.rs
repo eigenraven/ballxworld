@@ -27,6 +27,8 @@ pub fn current_net_timestamp() -> u64 {
 // Allow up to 10s clock difference, then drop packets
 const MAX_NET_TIMESTAMP_DELTA: u64 = 10_000;
 
+pub const NET_KEEPALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
+
 pub fn net_timestamp_delta(a: u64, b: u64) -> u64 {
     if a > b {
         a - b

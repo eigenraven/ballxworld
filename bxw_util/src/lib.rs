@@ -4,6 +4,7 @@
 pub use blake3;
 pub use bytemuck;
 pub use divrem;
+pub use flume;
 pub use fnv;
 pub use glm;
 pub use itertools;

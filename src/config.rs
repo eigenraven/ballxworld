@@ -19,7 +19,6 @@ pub struct Config {
     pub performance_load_distance: u32,
     pub performance_draw_distance: u32,
     pub performance_threads: u32,
-    pub performance_network_threads: u32,
 
     pub server_listen_addresses: Vec<SocketAddr>,
     pub server_mtu: u16,
@@ -52,7 +51,6 @@ impl Config {
             performance_load_distance: 10,
             performance_draw_distance: 10,
             performance_threads: cpus,
-            performance_network_threads: 3,
 
             server_listen_addresses: vec![SocketAddr::V4(SocketAddrV4::new(
                 std::net::Ipv4Addr::new(0, 0, 0, 0),
@@ -138,9 +136,6 @@ impl Config {
         self.performance_threads = toml_doc["performance"]["threads"]
             .as_integer()
             .map_or(self.performance_threads, |v| v as u32);
-        self.performance_network_threads = toml_doc["performance"]["network_threads"]
-            .as_integer()
-            .map_or(self.performance_network_threads, |v| v as u32);
 
         self.server_listen_addresses = toml_doc["server"]["listen_addresses"]
             .as_array()
@@ -194,8 +189,6 @@ impl Config {
             Item::Value(Value::from(self.performance_draw_distance as i64));
         toml_doc["performance"]["threads"] =
             Item::Value(Value::from(self.performance_threads as i64));
-        toml_doc["performance"]["network_threads"] =
-            Item::Value(Value::from(self.performance_network_threads as i64));
 
         toml_doc["server"]["listen_addresses"] = Item::Value(
             self.server_listen_addresses

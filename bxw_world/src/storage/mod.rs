@@ -153,8 +153,8 @@ impl ChunkIoRequest {
 pub type ChunkIoResponseQueue = VecDeque<ChunkIoResponse>;
 
 pub struct WorldDiskStorage {
-    db_path: PathBuf,
-    db: Arc<Mutex<Connection>>,
+    _db_path: PathBuf,
+    _db: Arc<Mutex<Connection>>,
     io_requests: Arc<Mutex<ChunkIoQueue>>,
     io_responses: Arc<Mutex<ChunkIoResponseQueue>>,
     worker_kill_switch: Arc<AtomicBool>,
@@ -196,8 +196,8 @@ impl WorldDiskStorage {
             .spawn(move || wds_worker(worker_data))
             .expect("Couldn't spawn a storage io thread");
         Ok(Self {
-            db_path,
-            db,
+            _db_path: db_path,
+            _db: db,
             io_requests,
             io_responses,
             worker_kill_switch,
