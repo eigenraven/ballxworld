@@ -50,9 +50,7 @@
 //! [Full example is in examples directory](https://github.com/MatchaChoco010/egui_winit_ash_vk_mem/tree/main/examples/example)
 #![warn(missing_docs)]
 
-use std::ffi::CStr;
-
-use ash::{version::DeviceV1_0, vk};
+use crate::{client::render::vulkan::allocation_cbs, vk};
 use bxw_util::bytemuck::bytes_of;
 use egui::{
     math::{pos2, vec2},
@@ -61,13 +59,14 @@ use egui::{
 };
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
+use std::ffi::CStr;
 
 use crate::client::render::vulkan::INFLIGHT_FRAMES;
 use crate::client::render::RenderingContext;
 
 use super::{vulkan::RenderingHandles, InPassFrameContext, PrePassFrameContext};
 
-/// egui integration with winit, ash and vk_mem.
+/// egui integration with winit, ash and vk_mem_erupt.
 pub struct EguiIntegration {
     logical_width: u32,
     logical_height: u32,
@@ -83,13 +82,13 @@ pub struct EguiIntegration {
     pipeline: vk::Pipeline,
     sampler: vk::Sampler,
     vertex_buffers: Vec<vk::Buffer>,
-    vertex_buffer_allocations: Vec<vk_mem::Allocation>,
+    vertex_buffer_allocations: Vec<vk_mem_erupt::Allocation>,
     index_buffers: Vec<vk::Buffer>,
-    index_buffer_allocations: Vec<vk_mem::Allocation>,
+    index_buffer_allocations: Vec<vk_mem_erupt::Allocation>,
     font_image_staging_buffer: vk::Buffer,
-    font_image_staging_buffer_allocation: vk_mem::Allocation,
+    font_image_staging_buffer_allocation: vk_mem_erupt::Allocation,
     font_image: vk::Image,
-    font_image_allocation: vk_mem::Allocation,
+    font_image_allocation: vk_mem_erupt::Allocation,
     font_image_view: vk::ImageView,
     font_image_size: (u64, u64),
     font_image_version: u64,
@@ -131,13 +130,12 @@ impl EguiIntegration {
         // Create DescriptorPool
         let descriptor_pool = unsafe {
             device.create_descriptor_pool(
-                &vk::DescriptorPoolCreateInfo::builder()
+                &vk::DescriptorPoolCreateInfoBuilder::new()
                     .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
                     .max_sets(1024)
-                    .pool_sizes(&[vk::DescriptorPoolSize::builder()
-                        .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                        .descriptor_count(1024)
-                        .build()]),
+                    .pool_sizes(&[vk::DescriptorPoolSizeBuilder::new()
+                        ._type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                        .descriptor_count(1024)]),
                 None,
             )
         }
@@ -150,13 +148,12 @@ impl EguiIntegration {
                 sets.push(
                     unsafe {
                         device.create_descriptor_set_layout(
-                            &vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[
-                                vk::DescriptorSetLayoutBinding::builder()
+                            &vk::DescriptorSetLayoutCreateInfoBuilder::new().bindings(&[
+                                vk::DescriptorSetLayoutBindingBuilder::new()
                                     .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                                     .descriptor_count(1)
                                     .binding(0)
-                                    .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-                                    .build(),
+                                    .stage_flags(vk::ShaderStageFlags::FRAGMENT),
                             ]),
                             None,
                         )
@@ -170,13 +167,14 @@ impl EguiIntegration {
         // Create PipelineLayout
         let pipeline_layout = unsafe {
             device.create_pipeline_layout(
-                &vk::PipelineLayoutCreateInfo::builder()
+                &vk::PipelineLayoutCreateInfoBuilder::new()
                     .set_layouts(&descriptor_set_layouts)
-                    .push_constant_ranges(&[vk::PushConstantRange::builder()
-                        .stage_flags(vk::ShaderStageFlags::VERTEX)
-                        .offset(0)
-                        .size(std::mem::size_of::<f32>() as u32 * 2) // screen size
-                        .build()]),
+                    .push_constant_ranges(&[
+                        vk::PushConstantRangeBuilder::new()
+                            .stage_flags(vk::ShaderStageFlags::VERTEX)
+                            .offset(0)
+                            .size(std::mem::size_of::<f32>() as u32 * 2), // screen size
+                    ]),
                 None,
             )
         }
@@ -184,36 +182,32 @@ impl EguiIntegration {
 
         // Create Pipeline
         let pipeline = {
-            let bindings = [vk::VertexInputBindingDescription::builder()
+            let bindings = [vk::VertexInputBindingDescriptionBuilder::new()
                 .binding(0)
                 .input_rate(vk::VertexInputRate::VERTEX)
                 .stride(
                     4 * std::mem::size_of::<f32>() as u32 + 4 * std::mem::size_of::<u8>() as u32,
-                )
-                .build()];
+                )];
 
             let attributes = [
                 // position
-                vk::VertexInputAttributeDescription::builder()
+                vk::VertexInputAttributeDescriptionBuilder::new()
                     .binding(0)
                     .offset(0)
                     .location(0)
-                    .format(vk::Format::R32G32_SFLOAT)
-                    .build(),
+                    .format(vk::Format::R32G32_SFLOAT),
                 // uv
-                vk::VertexInputAttributeDescription::builder()
+                vk::VertexInputAttributeDescriptionBuilder::new()
                     .binding(0)
                     .offset(8)
                     .location(1)
-                    .format(vk::Format::R32G32_SFLOAT)
-                    .build(),
+                    .format(vk::Format::R32G32_SFLOAT),
                 // color
-                vk::VertexInputAttributeDescription::builder()
+                vk::VertexInputAttributeDescriptionBuilder::new()
                     .binding(0)
                     .offset(16)
                     .location(2)
-                    .format(vk::Format::R8G8B8A8_UNORM)
-                    .build(),
+                    .format(vk::Format::R8G8B8A8_UNORM),
             ];
 
             let vertex_shader_module = rctx
@@ -226,24 +220,22 @@ impl EguiIntegration {
                 .expect("Couldn't load fragment egui shader");
             let main_function_name = CStr::from_bytes_with_nul(b"main\0").unwrap();
             let pipeline_shader_stages = [
-                vk::PipelineShaderStageCreateInfo::builder()
-                    .stage(vk::ShaderStageFlags::VERTEX)
+                vk::PipelineShaderStageCreateInfoBuilder::new()
+                    .stage(vk::ShaderStageFlagBits::VERTEX)
                     .module(vertex_shader_module)
-                    .name(main_function_name)
-                    .build(),
-                vk::PipelineShaderStageCreateInfo::builder()
-                    .stage(vk::ShaderStageFlags::FRAGMENT)
+                    .name(main_function_name),
+                vk::PipelineShaderStageCreateInfoBuilder::new()
+                    .stage(vk::ShaderStageFlagBits::FRAGMENT)
                     .module(fragment_shader_module)
-                    .name(main_function_name)
-                    .build(),
+                    .name(main_function_name),
             ];
 
-            let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
+            let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfoBuilder::new()
                 .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
-            let viewport_info = vk::PipelineViewportStateCreateInfo::builder()
+            let viewport_info = vk::PipelineViewportStateCreateInfoBuilder::new()
                 .viewport_count(1)
                 .scissor_count(1);
-            let rasterization_info = vk::PipelineRasterizationStateCreateInfo::builder()
+            let rasterization_info = vk::PipelineRasterizationStateCreateInfoBuilder::new()
                 .depth_clamp_enable(false)
                 .rasterizer_discard_enable(false)
                 .polygon_mode(vk::PolygonMode::FILL)
@@ -251,12 +243,12 @@ impl EguiIntegration {
                 .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
                 .depth_bias_enable(false)
                 .line_width(1.0);
-            let stencil_op = vk::StencilOpState::builder()
+            let stencil_op = vk::StencilOpStateBuilder::new()
                 .fail_op(vk::StencilOp::KEEP)
                 .pass_op(vk::StencilOp::KEEP)
                 .compare_op(vk::CompareOp::ALWAYS)
                 .build();
-            let depth_stencil_info = vk::PipelineDepthStencilStateCreateInfo::builder()
+            let depth_stencil_info = vk::PipelineDepthStencilStateCreateInfoBuilder::new()
                 .depth_test_enable(false)
                 .depth_write_enable(false)
                 .depth_compare_op(vk::CompareOp::ALWAYS)
@@ -264,7 +256,7 @@ impl EguiIntegration {
                 .stencil_test_enable(false)
                 .front(stencil_op)
                 .back(stencil_op);
-            let color_blend_attachments = [vk::PipelineColorBlendAttachmentState::builder()
+            let color_blend_attachments = [vk::PipelineColorBlendAttachmentStateBuilder::new()
                 .color_write_mask(
                     vk::ColorComponentFlags::R
                         | vk::ColorComponentFlags::G
@@ -273,20 +265,19 @@ impl EguiIntegration {
                 )
                 .blend_enable(true)
                 .src_color_blend_factor(vk::BlendFactor::ONE)
-                .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-                .build()];
-            let color_blend_info = vk::PipelineColorBlendStateCreateInfo::builder()
+                .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)];
+            let color_blend_info = vk::PipelineColorBlendStateCreateInfoBuilder::new()
                 .attachments(&color_blend_attachments);
             let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
             let dynamic_state_info =
-                vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
-            let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder()
+                vk::PipelineDynamicStateCreateInfoBuilder::new().dynamic_states(&dynamic_states);
+            let vertex_input_state = vk::PipelineVertexInputStateCreateInfoBuilder::new()
                 .vertex_attribute_descriptions(&attributes)
                 .vertex_binding_descriptions(&bindings);
-            let multisample_info = vk::PipelineMultisampleStateCreateInfo::builder()
+            let multisample_info = vk::PipelineMultisampleStateCreateInfoBuilder::new()
                 .rasterization_samples(rctx.handles.sample_count);
 
-            let pipeline_create_info = [vk::GraphicsPipelineCreateInfo::builder()
+            let pipeline_create_info = [vk::GraphicsPipelineCreateInfoBuilder::new()
                 .stages(&pipeline_shader_stages)
                 .vertex_input_state(&vertex_input_state)
                 .input_assembly_state(&input_assembly_info)
@@ -298,20 +289,19 @@ impl EguiIntegration {
                 .dynamic_state(&dynamic_state_info)
                 .layout(pipeline_layout)
                 .render_pass(rctx.handles.mainpass)
-                .subpass(0)
-                .build()];
+                .subpass(0)];
 
             let pipeline = unsafe {
                 device.create_graphics_pipelines(
-                    vk::PipelineCache::null(),
+                    Some(rctx.pipeline_cache),
                     &pipeline_create_info,
-                    None,
+                    allocation_cbs(),
                 )
             }
             .expect("Failed to create egui graphics pipeline.")[0];
             unsafe {
-                device.destroy_shader_module(vertex_shader_module, None);
-                device.destroy_shader_module(fragment_shader_module, None);
+                device.destroy_shader_module(Some(vertex_shader_module), allocation_cbs());
+                device.destroy_shader_module(Some(fragment_shader_module), allocation_cbs());
             }
             pipeline
         };
@@ -319,7 +309,7 @@ impl EguiIntegration {
         // Create Sampler
         let sampler = unsafe {
             device.create_sampler(
-                &vk::SamplerCreateInfo::builder()
+                &vk::SamplerCreateInfoBuilder::new()
                     .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
                     .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
                     .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
@@ -343,12 +333,12 @@ impl EguiIntegration {
         for _ in 0..INFLIGHT_FRAMES {
             let (vertex_buffer, vertex_buffer_allocation, _info) = vmalloc
                 .create_buffer(
-                    &vk::BufferCreateInfo::builder()
+                    &vk::BufferCreateInfoBuilder::new()
                         .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
                         .sharing_mode(vk::SharingMode::EXCLUSIVE)
                         .size(Self::vertex_buffer_size()),
-                    &vk_mem::AllocationCreateInfo {
-                        usage: vk_mem::MemoryUsage::CpuToGpu,
+                    &vk_mem_erupt::AllocationCreateInfo {
+                        usage: vk_mem_erupt::MemoryUsage::CpuToGpu,
                         required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
                             | vk::MemoryPropertyFlags::HOST_COHERENT,
                         ..Default::default()
@@ -357,12 +347,12 @@ impl EguiIntegration {
                 .expect("Failed to create vertex buffer.");
             let (index_buffer, index_buffer_allocation, _info) = vmalloc
                 .create_buffer(
-                    &vk::BufferCreateInfo::builder()
+                    &vk::BufferCreateInfoBuilder::new()
                         .usage(vk::BufferUsageFlags::INDEX_BUFFER)
                         .sharing_mode(vk::SharingMode::EXCLUSIVE)
                         .size(Self::index_buffer_size()),
-                    &vk_mem::AllocationCreateInfo {
-                        usage: vk_mem::MemoryUsage::CpuToGpu,
+                    &vk_mem_erupt::AllocationCreateInfo {
+                        usage: vk_mem_erupt::MemoryUsage::CpuToGpu,
                         required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
                             | vk::MemoryPropertyFlags::HOST_COHERENT,
                         ..Default::default()
@@ -379,15 +369,15 @@ impl EguiIntegration {
         // Create font image and anything related to it
         // These values will be uploaded at rendering time
         let font_image_staging_buffer = Default::default();
-        let font_image_staging_buffer_allocation = vk_mem::Allocation::null();
+        let font_image_staging_buffer_allocation = vk_mem_erupt::Allocation::null();
         let font_image = Default::default();
-        let font_image_allocation = vk_mem::Allocation::null();
+        let font_image_allocation = vk_mem_erupt::Allocation::null();
         let font_image_view = Default::default();
         let font_image_size = (0, 0);
         let font_image_version = 0;
         let font_descriptor_sets = unsafe {
             device.allocate_descriptor_sets(
-                &vk::DescriptorSetAllocateInfo::builder()
+                &vk::DescriptorSetAllocateInfoBuilder::new()
                     .descriptor_pool(descriptor_pool)
                     .set_layouts(&descriptor_set_layouts),
             )
@@ -397,15 +387,14 @@ impl EguiIntegration {
         // User Textures
         let user_texture_layout = unsafe {
             device.create_descriptor_set_layout(
-                &vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[
-                    vk::DescriptorSetLayoutBinding::builder()
+                &vk::DescriptorSetLayoutCreateInfoBuilder::new().bindings(&[
+                    vk::DescriptorSetLayoutBindingBuilder::new()
                         .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                         .descriptor_count(1)
                         .binding(0)
-                        .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-                        .build(),
+                        .stage_flags(vk::ShaderStageFlags::FRAGMENT),
                 ]),
-                None,
+                allocation_cbs(),
             )
         }
         .expect("Failed to create descriptor set layout.");
@@ -799,30 +788,33 @@ impl EguiIntegration {
             device.cmd_set_viewport(
                 command_buffer,
                 0,
-                &[vk::Viewport::builder()
+                &[vk::ViewportBuilder::new()
                     .x(0.0)
                     .y(0.0)
                     .width(self.logical_width as f32)
                     .height(self.logical_height as f32)
                     .min_depth(0.0)
-                    .max_depth(1.0)
-                    .build()],
+                    .max_depth(1.0)],
             );
             let wsz = fctx.rctx.window.size();
             let (width_points, height_points) = (wsz.0 as f32, wsz.1 as f32);
+            let width_bytes = bytes_of(&width_points);
+            let height_bytes = bytes_of(&height_points);
             device.cmd_push_constants(
                 command_buffer,
                 self.pipeline_layout,
                 vk::ShaderStageFlags::VERTEX,
                 0,
-                bytes_of(&width_points),
+                width_bytes.len() as u32,
+                width_bytes.as_ptr() as *const std::ffi::c_void,
             );
             device.cmd_push_constants(
                 command_buffer,
                 self.pipeline_layout,
                 vk::ShaderStageFlags::VERTEX,
-                std::mem::size_of_val(&width_points) as u32,
-                bytes_of(&height_points),
+                width_bytes.len() as u32,
+                height_bytes.len() as u32,
+                height_bytes.as_ptr() as *const std::ffi::c_void,
             );
         }
 
@@ -912,20 +904,19 @@ impl EguiIntegration {
                 device.cmd_set_scissor(
                     command_buffer,
                     0,
-                    &[vk::Rect2D::builder()
+                    &[vk::Rect2DBuilder::new()
                         .offset(
-                            vk::Offset2D::builder()
+                            vk::Offset2DBuilder::new()
                                 .x(min.x.round() as i32)
                                 .y(min.y.round() as i32)
                                 .build(),
                         )
                         .extent(
-                            vk::Extent2D::builder()
+                            vk::Extent2DBuilder::new()
                                 .width((max.x.round() - min.x) as u32)
                                 .height((max.y.round() - min.y) as u32)
                                 .build(),
-                        )
-                        .build()],
+                        )],
                 );
                 device.cmd_draw_indexed(
                     command_buffer,
@@ -943,26 +934,18 @@ impl EguiIntegration {
 
         // unmap buffers
         let vmalloc = fctx.rctx.handles.vmalloc.lock();
-        vmalloc
-            .flush_allocation(
-                &self.vertex_buffer_allocations[fctx.inflight_index],
-                0,
-                vk::WHOLE_SIZE as usize,
-            )
-            .expect("Failed to flush allocation.");
-        vmalloc
-            .flush_allocation(
-                &self.index_buffer_allocations[fctx.inflight_index],
-                0,
-                vk::WHOLE_SIZE as usize,
-            )
-            .expect("Failed to flush allocation.");
-        vmalloc
-            .unmap_memory(&self.vertex_buffer_allocations[fctx.inflight_index])
-            .expect("Failed to unmap memory.");
-        vmalloc
-            .unmap_memory(&self.index_buffer_allocations[fctx.inflight_index])
-            .expect("Failed to unmap memory.");
+        vmalloc.flush_allocation(
+            &self.vertex_buffer_allocations[fctx.inflight_index],
+            0,
+            vk::WHOLE_SIZE as usize,
+        );
+        vmalloc.flush_allocation(
+            &self.index_buffer_allocations[fctx.inflight_index],
+            0,
+            vk::WHOLE_SIZE as usize,
+        );
+        vmalloc.unmap_memory(&self.vertex_buffer_allocations[fctx.inflight_index]);
+        vmalloc.unmap_memory(&self.index_buffer_allocations[fctx.inflight_index]);
     }
 
     fn upload_font_texture(
@@ -995,48 +978,44 @@ impl EguiIntegration {
 
         let vmalloc = rctx.handles.vmalloc.lock();
         // free prev staging buffer
-        vmalloc
-            .destroy_buffer(
-                self.font_image_staging_buffer,
-                &self.font_image_staging_buffer_allocation,
-            )
-            .expect("Failed to destroy buffer.");
+        vmalloc.destroy_buffer(
+            self.font_image_staging_buffer,
+            &self.font_image_staging_buffer_allocation,
+        );
 
         // free font image
         unsafe {
-            device.destroy_image_view(self.font_image_view, None);
+            device.destroy_image_view(Some(self.font_image_view), None);
         }
-        vmalloc
-            .destroy_image(self.font_image, &self.font_image_allocation)
-            .expect("Failed to destroy image.");
+        vmalloc.destroy_image(self.font_image, &self.font_image_allocation);
 
         // create font image
         let (font_image_staging_buffer, font_image_staging_buffer_allocation, _info) = vmalloc
             .create_buffer(
-                &vk::BufferCreateInfo::builder()
+                &vk::BufferCreateInfoBuilder::new()
                     .usage(vk::BufferUsageFlags::TRANSFER_SRC)
                     .sharing_mode(vk::SharingMode::EXCLUSIVE)
                     .size(dimensions.0 * dimensions.1 * 4),
-                &vk_mem::AllocationCreateInfo {
-                    usage: vk_mem::MemoryUsage::CpuOnly,
+                &vk_mem_erupt::AllocationCreateInfo {
+                    usage: vk_mem_erupt::MemoryUsage::CpuOnly,
                     required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
                         | vk::MemoryPropertyFlags::HOST_COHERENT,
                     ..Default::default()
                 },
             )
-            .expect("Failed to create buffer.");
+            .expect("Couldn't create font image staging buffer");
         self.font_image_staging_buffer = font_image_staging_buffer;
         self.font_image_staging_buffer_allocation = font_image_staging_buffer_allocation;
         let (font_image, font_image_allocation, _info) = vmalloc
             .create_image(
-                &vk::ImageCreateInfo::builder()
+                &vk::ImageCreateInfoBuilder::new()
                     .format(vk::Format::R8G8B8A8_UNORM)
                     .initial_layout(vk::ImageLayout::UNDEFINED)
-                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .samples(vk::SampleCountFlagBits::_1)
                     .tiling(vk::ImageTiling::OPTIMAL)
                     .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST)
                     .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                    .image_type(vk::ImageType::TYPE_2D)
+                    .image_type(vk::ImageType::_2D)
                     .mip_levels(1)
                     .array_layers(1)
                     .extent(vk::Extent3D {
@@ -1044,8 +1023,8 @@ impl EguiIntegration {
                         height: dimensions.1 as u32,
                         depth: 1,
                     }),
-                &vk_mem::AllocationCreateInfo {
-                    usage: vk_mem::MemoryUsage::GpuOnly,
+                &vk_mem_erupt::AllocationCreateInfo {
+                    usage: vk_mem_erupt::MemoryUsage::GpuOnly,
                     ..Default::default()
                 },
             )
@@ -1054,12 +1033,12 @@ impl EguiIntegration {
         self.font_image_allocation = font_image_allocation;
         self.font_image_view = unsafe {
             device.create_image_view(
-                &vk::ImageViewCreateInfo::builder()
+                &vk::ImageViewCreateInfoBuilder::new()
                     .image(self.font_image)
                     .format(vk::Format::R8G8B8A8_UNORM)
-                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .view_type(vk::ImageViewType::_2D)
                     .subresource_range(
-                        vk::ImageSubresourceRange::builder()
+                        vk::ImageSubresourceRangeBuilder::new()
                             .aspect_mask(vk::ImageAspectFlags::COLOR)
                             .base_array_layer(0)
                             .base_mip_level(0)
@@ -1078,16 +1057,14 @@ impl EguiIntegration {
         for &font_descriptor_set in self.font_descriptor_sets.iter() {
             unsafe {
                 device.update_descriptor_sets(
-                    &[vk::WriteDescriptorSet::builder()
+                    &[vk::WriteDescriptorSetBuilder::new()
                         .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                         .dst_set(font_descriptor_set)
-                        .image_info(&[vk::DescriptorImageInfo::builder()
+                        .image_info(&[vk::DescriptorImageInfoBuilder::new()
                             .image_view(self.font_image_view)
                             .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                            .sampler(self.sampler)
-                            .build()])
-                        .dst_binding(0)
-                        .build()],
+                            .sampler(self.sampler)])
+                        .dst_binding(0)],
                     &[],
                 );
             }
@@ -1100,9 +1077,7 @@ impl EguiIntegration {
         unsafe {
             ptr.copy_from_nonoverlapping(data.as_ptr(), data.len());
         }
-        vmalloc
-            .unmap_memory(&self.font_image_staging_buffer_allocation)
-            .expect("Failed to map memory");
+        vmalloc.unmap_memory(&self.font_image_staging_buffer_allocation);
         drop(vmalloc);
         // record buffer staging commands to command buffer
         unsafe {
@@ -1111,13 +1086,13 @@ impl EguiIntegration {
                 command_buffer,
                 vk::PipelineStageFlags::HOST,
                 vk::PipelineStageFlags::TRANSFER,
-                vk::DependencyFlags::empty(),
+                None,
                 &[],
                 &[],
-                &[vk::ImageMemoryBarrier::builder()
+                &[vk::ImageMemoryBarrierBuilder::new()
                     .image(self.font_image)
                     .subresource_range(
-                        vk::ImageSubresourceRange::builder()
+                        vk::ImageSubresourceRangeBuilder::new()
                             .aspect_mask(vk::ImageAspectFlags::COLOR)
                             .level_count(1)
                             .layer_count(1)
@@ -1128,8 +1103,7 @@ impl EguiIntegration {
                     .src_access_mask(vk::AccessFlags::default())
                     .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                     .old_layout(vk::ImageLayout::UNDEFINED)
-                    .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                    .build()],
+                    .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)],
             );
 
             // copy staging buffer to image
@@ -1138,9 +1112,9 @@ impl EguiIntegration {
                 self.font_image_staging_buffer,
                 self.font_image,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                &[vk::BufferImageCopy::builder()
+                &[vk::BufferImageCopyBuilder::new()
                     .image_subresource(
-                        vk::ImageSubresourceLayers::builder()
+                        vk::ImageSubresourceLayersBuilder::new()
                             .aspect_mask(vk::ImageAspectFlags::COLOR)
                             .base_array_layer(0)
                             .layer_count(1)
@@ -1148,13 +1122,12 @@ impl EguiIntegration {
                             .build(),
                     )
                     .image_extent(
-                        vk::Extent3D::builder()
+                        vk::Extent3DBuilder::new()
                             .width(dimensions.0 as u32)
                             .height(dimensions.1 as u32)
                             .depth(1)
                             .build(),
-                    )
-                    .build()],
+                    )],
             );
 
             // update image layout to shader read only optimal
@@ -1162,13 +1135,13 @@ impl EguiIntegration {
                 command_buffer,
                 vk::PipelineStageFlags::TRANSFER,
                 vk::PipelineStageFlags::ALL_GRAPHICS,
-                vk::DependencyFlags::empty(),
+                None,
                 &[],
                 &[],
-                &[vk::ImageMemoryBarrier::builder()
+                &[vk::ImageMemoryBarrierBuilder::new()
                     .image(self.font_image)
                     .subresource_range(
-                        vk::ImageSubresourceRange::builder()
+                        vk::ImageSubresourceRangeBuilder::new()
                             .aspect_mask(vk::ImageAspectFlags::COLOR)
                             .level_count(1)
                             .layer_count(1)
@@ -1179,8 +1152,7 @@ impl EguiIntegration {
                     .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                     .dst_access_mask(vk::AccessFlags::SHADER_READ)
                     .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                    .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .build()],
+                    .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)],
             );
         }
     }
@@ -1196,7 +1168,7 @@ impl EguiIntegration {
     /// ```sh
     /// cargo run --example user_texture
     /// ```
-    /// [The example for user texture is in examples directory](https://github.com/MatchaChoco010/egui_winit_ash_vk_mem/tree/main/examples/user_texture)
+    /// [The example for user texture is in examples directory](https://github.com/MatchaChoco010/egui_winit_ash_vk_mem_erupt/tree/main/examples/user_texture)
     pub fn register_user_texture(
         &mut self,
         image_view: vk::ImageView,
@@ -1221,7 +1193,7 @@ impl EguiIntegration {
         let layouts = [self.user_texture_layout];
         let descriptor_set = unsafe {
             rctx.handles.device.allocate_descriptor_sets(
-                &vk::DescriptorSetAllocateInfo::builder()
+                &vk::DescriptorSetAllocateInfoBuilder::new()
                     .descriptor_pool(self.descriptor_pool)
                     .set_layouts(&layouts),
             )
@@ -1229,16 +1201,14 @@ impl EguiIntegration {
         .expect("Failed to create descriptor sets.")[0];
         unsafe {
             rctx.handles.device.update_descriptor_sets(
-                &[vk::WriteDescriptorSet::builder()
+                &[vk::WriteDescriptorSetBuilder::new()
                     .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                     .dst_set(descriptor_set)
-                    .image_info(&[vk::DescriptorImageInfo::builder()
+                    .image_info(&[vk::DescriptorImageInfoBuilder::new()
                         .image_view(image_view)
                         .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                        .sampler(sampler)
-                        .build()])
-                    .dst_binding(0)
-                    .build()],
+                        .sampler(sampler)])
+                    .dst_binding(0)],
                 &[],
             );
         }
@@ -1281,35 +1251,27 @@ impl EguiIntegration {
     /// This method release vk objects memory that is not managed by Rust.
     pub unsafe fn destroy(&mut self, handles: &RenderingHandles) {
         let device = &handles.device;
-        device.destroy_descriptor_set_layout(self.user_texture_layout, None);
-        device.destroy_image_view(self.font_image_view, None);
+        device.destroy_descriptor_set_layout(Some(self.user_texture_layout), None);
+        device.destroy_image_view(Some(self.font_image_view), None);
         let vmalloc = handles.vmalloc.lock();
-        vmalloc
-            .destroy_image(self.font_image, &self.font_image_allocation)
-            .expect("Failed to destroy image.");
-        vmalloc
-            .destroy_buffer(
-                self.font_image_staging_buffer,
-                &self.font_image_staging_buffer_allocation,
-            )
-            .expect("Failed to destroy buffer.");
+        vmalloc.destroy_image(self.font_image, &self.font_image_allocation);
+        vmalloc.destroy_buffer(
+            self.font_image_staging_buffer,
+            &self.font_image_staging_buffer_allocation,
+        );
         for i in 0..self.index_buffers.len() {
-            vmalloc
-                .destroy_buffer(self.index_buffers[i], &self.index_buffer_allocations[i])
-                .expect("Failed to destroy index buffer.");
+            vmalloc.destroy_buffer(self.index_buffers[i], &self.index_buffer_allocations[i]);
         }
         for i in 0..self.vertex_buffers.len() {
-            vmalloc
-                .destroy_buffer(self.vertex_buffers[i], &self.vertex_buffer_allocations[i])
-                .expect("Failed to destroy vertex buffer.");
+            vmalloc.destroy_buffer(self.vertex_buffers[i], &self.vertex_buffer_allocations[i]);
         }
         drop(vmalloc);
-        device.destroy_sampler(self.sampler, None);
-        device.destroy_pipeline(self.pipeline, None);
-        device.destroy_pipeline_layout(self.pipeline_layout, None);
+        device.destroy_sampler(Some(self.sampler), None);
+        device.destroy_pipeline(Some(self.pipeline), None);
+        device.destroy_pipeline_layout(Some(self.pipeline_layout), None);
         for &descriptor_set_layout in self.descriptor_set_layouts.iter() {
-            device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+            device.destroy_descriptor_set_layout(Some(descriptor_set_layout), None);
         }
-        device.destroy_descriptor_pool(self.descriptor_pool, None);
+        device.destroy_descriptor_pool(Some(self.descriptor_pool), None);
     }
 }

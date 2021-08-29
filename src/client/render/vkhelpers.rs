@@ -1,13 +1,11 @@
 use crate::client::render::vulkan::{allocation_cbs, QueueGuard, RenderingHandles};
-use ash::prelude::VkResult;
-use ash::version::DeviceV1_0;
-use ash::vk;
-use ash::vk::Handle;
+use crate::vk;
 use bxw_util::*;
 use parking_lot::MutexGuard;
 use std::ffi::CString;
 use std::mem::ManuallyDrop;
-use vk_mem as vma;
+use std::sync::Arc;
+use vk_mem_erupt as vma;
 
 pub fn name_vk_object<F: Fn() -> S, S>(
     handles: &RenderingHandles,
@@ -17,14 +15,14 @@ pub fn name_vk_object<F: Fn() -> S, S>(
 ) where
     S: Into<Vec<u8>>,
 {
-    if let Some(ext_debug) = handles.debug_utils.as_ref() {
+    if handles.ext_debug.is_some() {
         let name_slice = name_fn();
         let name = CString::new(name_slice).unwrap();
-        let ni = vk::DebugUtilsObjectNameInfoEXT::builder()
+        let ni = vk::DebugUtilsObjectNameInfoEXTBuilder::new()
             .object_handle(raw_handle)
             .object_type(obj_type)
             .object_name(name.as_c_str());
-        unsafe { ext_debug.debug_utils_set_object_name(handles.device.handle(), &ni) }.unwrap();
+        unsafe { handles.device.set_debug_utils_object_name_ext(&ni) }.unwrap();
     }
 }
 
@@ -64,7 +62,7 @@ impl OwnedImage {
         let r = vmalloc
             .create_image(img_info, mem_info)
             .expect("Could not create Vulkan image");
-        let ivci = vk::ImageViewCreateInfo::builder()
+        let ivci = vk::ImageViewCreateInfoBuilder::new()
             .image(r.0)
             .view_type(iv_type)
             .format(img_info.format)
@@ -96,13 +94,13 @@ impl OwnedImage {
         name_vk_object(
             handles,
             &name_fn,
-            self.image.as_raw(),
+            self.image.object_handle(),
             vk::ObjectType::IMAGE,
         );
         name_vk_object(
             handles,
             name_fn,
-            self.image_view.as_raw(),
+            self.image_view.object_handle(),
             vk::ObjectType::IMAGE_VIEW,
         );
     }
@@ -114,11 +112,9 @@ impl VulkanDeviceObject for OwnedImage {
             unsafe {
                 handles
                     .device
-                    .destroy_image_view(self.image_view, allocation_cbs());
+                    .destroy_image_view(Some(self.image_view), allocation_cbs());
             }
-            vmalloc
-                .destroy_image(self.image, &self.allocation.take().unwrap().0)
-                .unwrap();
+            vmalloc.destroy_image(self.image, &self.allocation.take().unwrap().0);
         }
         *self = Self::default();
     }
@@ -178,7 +174,7 @@ impl OwnedBuffer {
     /// Returns a cpu-only, mapped buffer (for one-off uploads) with given contents
     pub fn new_single_upload<T: Sized>(vmalloc: &mut vma::Allocator, data: &[T]) -> Self {
         let data_bytes = byte_slice_from(data);
-        let bci = vk::BufferCreateInfo::builder()
+        let bci = vk::BufferCreateInfoBuilder::new()
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
             .size(data_bytes.len() as u64);
@@ -198,7 +194,7 @@ impl OwnedBuffer {
                 data_bytes.len(),
             );
         }
-        vmalloc.flush_allocation(al, 0, data_bytes.len()).unwrap();
+        vmalloc.flush_allocation(al, 0, data_bytes.len());
         buf
     }
 
@@ -209,7 +205,7 @@ impl OwnedBuffer {
         name_vk_object(
             handles,
             name_fn,
-            self.buffer.as_raw(),
+            self.buffer.object_handle(),
             vk::ObjectType::BUFFER,
         );
     }
@@ -218,9 +214,7 @@ impl OwnedBuffer {
 impl VulkanDeviceObject for OwnedBuffer {
     fn destroy(&mut self, vmalloc: &mut vma::Allocator, _handles: &RenderingHandles) {
         if self.allocation.is_some() {
-            vmalloc
-                .destroy_buffer(self.buffer, &self.allocation.take().unwrap().0)
-                .unwrap();
+            vmalloc.destroy_buffer(self.buffer, &self.allocation.take().unwrap().0);
         }
         *self = Self::default();
     }
@@ -237,21 +231,21 @@ impl<'h> FenceGuard<'h> {
         signaled: bool,
         name_fn: F,
     ) -> Self {
-        let fci = vk::FenceCreateInfo::builder().flags(if signaled {
+        let fci = vk::FenceCreateInfoBuilder::new().flags(if signaled {
             vk::FenceCreateFlags::SIGNALED
         } else {
             vk::FenceCreateFlags::empty()
         });
         let fence = unsafe { handles.device.create_fence(&fci, allocation_cbs()) }
             .expect("Couldn't create Vulkan fence");
-        if let Some(ext_debug) = handles.debug_utils.as_ref() {
+        if handles.ext_debug.is_some() {
             let name_slice = name_fn();
             let name = CString::new(name_slice).unwrap();
-            let ni = vk::DebugUtilsObjectNameInfoEXT::builder()
-                .object_handle(fence.as_raw())
+            let ni = vk::DebugUtilsObjectNameInfoEXTBuilder::new()
+                .object_handle(fence.object_handle())
                 .object_type(vk::ObjectType::FENCE)
                 .object_name(name.as_c_str());
-            unsafe { ext_debug.debug_utils_set_object_name(handles.device.handle(), &ni) }.unwrap();
+            unsafe { handles.device.set_debug_utils_object_name_ext(&ni) }.unwrap();
         }
         Self { handles, fence }
     }
@@ -261,14 +255,14 @@ impl<'h> FenceGuard<'h> {
     }
 
     pub fn signaled(&self) -> bool {
-        match unsafe { self.handles.device.get_fence_status(self.fence) } {
-            Ok(_) => true,
-            Err(vk::Result::NOT_READY) => false,
-            Err(e) => panic!("{}", e),
+        match unsafe { self.handles.device.get_fence_status(self.fence) }.raw {
+            vk::Result::SUCCESS => true,
+            vk::Result::NOT_READY => false,
+            e => panic!("{:?}", e),
         }
     }
 
-    pub fn wait(&self, timeout_ns: Option<u64>) -> VkResult<()> {
+    pub fn wait(&self, timeout_ns: Option<u64>) -> erupt::utils::VulkanResult<()> {
         unsafe {
             self.handles.device.wait_for_fences(
                 &[self.fence],
@@ -289,7 +283,7 @@ impl<'h> Drop for FenceGuard<'h> {
             unsafe {
                 self.handles
                     .device
-                    .destroy_fence(self.fence, allocation_cbs());
+                    .destroy_fence(Some(self.fence), allocation_cbs());
             }
             self.fence = vk::Fence::null();
         }
@@ -312,13 +306,13 @@ impl<'h> OnetimeCmdGuard<'h> {
             let pool = *lock;
             (Some(lock), pool)
         };
-        let bai = vk::CommandBufferAllocateInfo::builder()
+        let bai = vk::CommandBufferAllocateInfoBuilder::new()
             .command_pool(pool)
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(1);
         let cmd = unsafe { handles.device.allocate_command_buffers(&bai) }
             .expect("Couldn't allocate one-time cmd buffer")[0];
-        let bgi = vk::CommandBufferBeginInfo::builder()
+        let bgi = vk::CommandBufferBeginInfoBuilder::new()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         unsafe { handles.device.begin_command_buffer(cmd, &bgi) }
             .expect("Couldn't begin recording one-time cmd buffer");
@@ -342,10 +336,13 @@ impl<'h> OnetimeCmdGuard<'h> {
         let bufs = [self.cmd];
 
         let pool_lock = self.pool_lock.take();
-        let si = vk::SubmitInfo::builder().command_buffers(&bufs);
-        let sis = [si.build()];
-        unsafe { handles.device.queue_submit(**queue, &sis, self.fence.fence) }
-            .expect("Couldn't submit one-time cmd buffer");
+        let sis = [vk::SubmitInfoBuilder::new().command_buffers(&bufs)];
+        unsafe {
+            handles
+                .device
+                .queue_submit(**queue, &sis, Some(self.fence.fence))
+        }
+        .expect("Couldn't submit one-time cmd buffer");
         self.fence
             .wait(None)
             .expect("Failed waiting for one-time cmd fence");
@@ -389,16 +386,16 @@ impl DynamicState {
         }
     }
 
-    pub fn cmd_update_pipeline(&self, device: &ash::Device, cmd: vk::CommandBuffer) {
+    pub fn cmd_update_pipeline(&self, device: &erupt::DeviceLoader, cmd: vk::CommandBuffer) {
         unsafe {
-            device.cmd_set_viewport(cmd, 0, &[self.get_viewport()]);
-            device.cmd_set_scissor(cmd, 0, &[self.get_scissor()]);
+            device.cmd_set_viewport(cmd, 0, &[self.get_viewport().into_builder()]);
+            device.cmd_set_scissor(cmd, 0, &[self.get_scissor().into_builder()]);
         }
     }
 }
 
 pub fn make_pipe_depthstencil() -> vk::PipelineDepthStencilStateCreateInfo {
-    vk::PipelineDepthStencilStateCreateInfo::builder()
+    vk::PipelineDepthStencilStateCreateInfoBuilder::new()
         .depth_test_enable(true)
         .depth_write_enable(true)
         .depth_compare_op(vk::CompareOp::LESS_OR_EQUAL)
@@ -419,7 +416,7 @@ pub fn identity_components() -> vk::ComponentMapping {
 }
 
 pub fn cmd_push_struct_constants<S>(
-    device: &ash::Device,
+    device: &erupt::DeviceLoader,
     cmd: vk::CommandBuffer,
     pipe_layout: vk::PipelineLayout,
     stages: vk::ShaderStageFlags,
@@ -429,13 +426,20 @@ pub fn cmd_push_struct_constants<S>(
     let pc_sz = std::mem::size_of::<S>();
     let pc_bytes = unsafe { std::slice::from_raw_parts(constants as *const _ as *const u8, pc_sz) };
     unsafe {
-        device.cmd_push_constants(cmd, pipe_layout, stages, offset, pc_bytes);
+        device.cmd_push_constants(
+            cmd,
+            pipe_layout,
+            stages,
+            offset,
+            pc_bytes.len() as u32,
+            pc_bytes.as_ptr() as *const std::ffi::c_void,
+        );
     }
 }
 
 pub struct DroppingCommandPool {
     pub pool: vk::CommandPool,
-    device: ash::Device,
+    device: Arc<erupt::DeviceLoader>,
 }
 
 impl DroppingCommandPool {
@@ -454,7 +458,7 @@ impl Drop for DroppingCommandPool {
         if self.pool != vk::CommandPool::null() {
             unsafe {
                 self.device
-                    .destroy_command_pool(self.pool, allocation_cbs());
+                    .destroy_command_pool(Some(self.pool), allocation_cbs());
             }
             self.pool = vk::CommandPool::null();
         }

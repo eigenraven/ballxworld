@@ -7,8 +7,7 @@ use crate::client::render::vulkan::{
 use crate::client::render::*;
 use crate::client::world::CameraSettings;
 use crate::config::Config;
-use ash::version::DeviceV1_0;
-use ash::vk;
+use crate::vk;
 use bxw_util::math::vec3;
 use bxw_util::math::*;
 use bxw_util::taskpool::Task;
@@ -25,11 +24,11 @@ use std::cell::RefCell;
 use std::ffi::CString;
 use std::sync::Arc;
 use std::sync::Weak;
-use vk_mem as vma;
+use vk_mem_erupt as vma;
 
 pub mod vox {
     use crate::offset_of;
-    use ash::vk;
+    use crate::vk;
     use std::mem;
 
     pub struct ChunkBuffers {
@@ -50,51 +49,56 @@ pub mod vox {
 
     impl VoxelVertex {
         pub fn description() -> (
-            [vk::VertexInputBindingDescription; 1],
-            [vk::VertexInputAttributeDescription; 6],
+            [vk::VertexInputBindingDescriptionBuilder<'static>; 1],
+            [vk::VertexInputAttributeDescriptionBuilder<'static>; 6],
         ) {
-            let bind_dsc = [vk::VertexInputBindingDescription::builder()
+            let bind_dsc = [vk::VertexInputBindingDescriptionBuilder::new()
                 .binding(0)
                 .stride(mem::size_of::<Self>() as u32)
-                .input_rate(vk::VertexInputRate::VERTEX)
-                .build()];
+                .input_rate(vk::VertexInputRate::VERTEX)];
             let attr_dsc = [
                 vk::VertexInputAttributeDescription {
                     binding: 0,
                     location: 0,
                     format: vk::Format::R32G32B32A32_SFLOAT,
                     offset: offset_of!(Self, position) as u32,
-                },
+                }
+                .into_builder(),
                 vk::VertexInputAttributeDescription {
                     binding: 0,
                     location: 1,
                     format: vk::Format::R32G32B32A32_SFLOAT,
                     offset: offset_of!(Self, color) as u32,
-                },
+                }
+                .into_builder(),
                 vk::VertexInputAttributeDescription {
                     binding: 0,
                     location: 2,
                     format: vk::Format::R32G32B32_SFLOAT,
                     offset: offset_of!(Self, texcoord) as u32,
-                },
+                }
+                .into_builder(),
                 vk::VertexInputAttributeDescription {
                     binding: 0,
                     location: 3,
                     format: vk::Format::R32_SINT,
                     offset: offset_of!(Self, index) as u32,
-                },
+                }
+                .into_builder(),
                 vk::VertexInputAttributeDescription {
                     binding: 0,
                     location: 4,
                     format: vk::Format::R32G32B32A32_SFLOAT,
                     offset: offset_of!(Self, barycentric_color_offset) as u32,
-                },
+                }
+                .into_builder(),
                 vk::VertexInputAttributeDescription {
                     binding: 0,
                     location: 5,
                     format: vk::Format::R32G32B32_SFLOAT,
                     offset: offset_of!(Self, barycentric) as u32,
-                },
+                }
+                .into_builder(),
             ];
             (bind_dsc, attr_dsc)
         }
@@ -124,19 +128,20 @@ pub mod vox {
     }
 
     impl VoxelPC {
-        pub fn pc_ranges() -> [vk::PushConstantRange; 1] {
+        pub fn pc_ranges() -> [vk::PushConstantRangeBuilder<'static>; 1] {
             [vk::PushConstantRange {
                 stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                 offset: 0,
                 size: mem::size_of::<Self>() as u32,
-            }]
+            }
+            .into_builder()]
         }
     }
 }
 
 struct DrawnChunk {
     pub cpos: ChunkPosition,
-    pub last_dirty: u64,
+    pub _last_dirty: u64,
     pub buffer: OwnedBuffer,
     pub istart: usize,
     pub vcount: u32,
@@ -254,7 +259,7 @@ impl ChunkDataHandler for MeshDataHandler {
             self.status_array[index] = ChunkDataState::Loaded;
             vctx.drawn_chunks[index] = Some(Arc::new(DrawnChunk {
                 cpos,
-                last_dirty: 0,
+                _last_dirty: 0,
                 buffer: OwnedBuffer::new(),
                 istart: 0,
                 vcount: 0,
@@ -276,11 +281,10 @@ impl ChunkDataHandler for MeshDataHandler {
                     line!(),
                     4,
                 );
-                let cpci = vk::CommandPoolCreateInfo::builder()
+                let cpci = vk::CommandPoolCreateInfoBuilder::new()
                     .queue_family_index(handles.queues.get_gtransfer_family())
                     .flags(vk::CommandPoolCreateFlags::TRANSIENT);
                 let cmd_pool = DroppingCommandPool::new(&handles, &cpci);
-                drop(cpci);
                 let mesh = match mesh_from_chunk(&registry, &neighbors, texture_dim) {
                     Some(m) => m,
                     None => return,
@@ -302,7 +306,7 @@ impl ChunkDataHandler for MeshDataHandler {
                             line!(),
                             4,
                         );
-                        let bi = vk::BufferCreateInfo::builder()
+                        let bi = vk::BufferCreateInfoBuilder::new()
                             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
                             .size(tot_sz as u64)
                             .sharing_mode(vk::SharingMode::EXCLUSIVE)
@@ -329,7 +333,7 @@ impl ChunkDataHandler for MeshDataHandler {
                             4,
                         );
                         let pool = &alloc_pool.0;
-                        let bi = vk::BufferCreateInfo::builder()
+                        let bi = vk::BufferCreateInfoBuilder::new()
                             .usage(
                                 vk::BufferUsageFlags::TRANSFER_DST
                                     | vk::BufferUsageFlags::VERTEX_BUFFER
@@ -375,8 +379,7 @@ impl ChunkDataHandler for MeshDataHandler {
                         handles
                             .vmalloc
                             .lock_traced("vmalloc", file!(), line!())
-                            .flush_allocation(&ai.0, 0, tot_sz)
-                            .unwrap();
+                            .flush_allocation(&ai.0, 0, tot_sz);
                     }
                     // copy from staging to gpu
                     {
@@ -388,9 +391,7 @@ impl ChunkDataHandler for MeshDataHandler {
                             4,
                         );
                         let cmd = OnetimeCmdGuard::new(&handles, Some(cmd_pool.pool));
-                        let bci = vk::BufferCopy::builder()
-                            .size(tot_sz as vk::DeviceSize)
-                            .build();
+                        let bci = vk::BufferCopyBuilder::new().size(tot_sz as vk::DeviceSize);
                         unsafe {
                             handles.device.cmd_copy_buffer(
                                 cmd.handle(),
@@ -417,7 +418,7 @@ impl ChunkDataHandler for MeshDataHandler {
 
                     DrawnChunk {
                         cpos,
-                        last_dirty: 0,
+                        _last_dirty: 0,
                         buffer,
                         istart: v_tot_sz,
                         vcount,
@@ -427,7 +428,7 @@ impl ChunkDataHandler for MeshDataHandler {
                 } else {
                     DrawnChunk {
                         cpos,
-                        last_dirty: 0,
+                        _last_dirty: 0,
                         buffer: OwnedBuffer::new(),
                         istart: 0,
                         vcount: 0,
@@ -496,7 +497,7 @@ impl VoxelRenderer {
                 .vmalloc
                 .lock_traced("vmalloc", file!(), line!());
             let qfs = [rctx.handles.queues.get_primary_family()];
-            let ex_bi = vk::BufferCreateInfo::builder()
+            let ex_bi = vk::BufferCreateInfoBuilder::new()
                 .usage(
                     vk::BufferUsageFlags::TRANSFER_DST
                         | vk::BufferUsageFlags::VERTEX_BUFFER
@@ -530,14 +531,13 @@ impl VoxelRenderer {
 
         let texture_ds_layout = {
             let samplers = [res.voxel_texture_sampler];
-            let binds = [vk::DescriptorSetLayoutBinding::builder()
+            let binds = [vk::DescriptorSetLayoutBindingBuilder::new()
                 .binding(0)
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .immutable_samplers(&samplers)
-                .descriptor_count(1)
-                .build()];
-            let dsci = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&binds);
+                .descriptor_count(1)];
+            let dsci = vk::DescriptorSetLayoutCreateInfoBuilder::new().bindings(&binds);
             unsafe {
                 rctx.handles
                     .device
@@ -547,13 +547,12 @@ impl VoxelRenderer {
         };
 
         let uniform_ds_layout = {
-            let binds = [vk::DescriptorSetLayoutBinding::builder()
+            let binds = [vk::DescriptorSetLayoutBindingBuilder::new()
                 .binding(0)
                 .stage_flags(vk::ShaderStageFlags::VERTEX)
                 .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-                .descriptor_count(1)
-                .build()];
-            let dsci = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&binds);
+                .descriptor_count(1)];
+            let dsci = vk::DescriptorSetLayoutCreateInfoBuilder::new().bindings(&binds);
             unsafe {
                 rctx.handles
                     .device
@@ -565,15 +564,17 @@ impl VoxelRenderer {
         let ds_pool = {
             let szs = [
                 vk::DescriptorPoolSize {
-                    ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    _type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                     descriptor_count: 2,
-                },
+                }
+                .into_builder(),
                 vk::DescriptorPoolSize {
-                    ty: vk::DescriptorType::UNIFORM_BUFFER,
+                    _type: vk::DescriptorType::UNIFORM_BUFFER,
                     descriptor_count: INFLIGHT_FRAMES * 2,
-                },
+                }
+                .into_builder(),
             ];
-            let dspi = vk::DescriptorPoolCreateInfo::builder()
+            let dspi = vk::DescriptorPoolCreateInfoBuilder::new()
                 .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
                 .max_sets(INFLIGHT_FRAMES * 4)
                 .pool_sizes(&szs);
@@ -587,7 +588,7 @@ impl VoxelRenderer {
 
         let texture_ds = {
             let lay = [texture_ds_layout];
-            let dai = vk::DescriptorSetAllocateInfo::builder()
+            let dai = vk::DescriptorSetAllocateInfoBuilder::new()
                 .descriptor_pool(ds_pool)
                 .set_layouts(&lay);
             unsafe { rctx.handles.device.allocate_descriptor_sets(&dai) }
@@ -596,17 +597,15 @@ impl VoxelRenderer {
 
         // write to texture DS
         {
-            let ii = [vk::DescriptorImageInfo::builder()
+            let ii = [vk::DescriptorImageInfoBuilder::new()
                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                .image_view(res.voxel_texture_array.image_view)
-                .build()];
-            let dw = [vk::WriteDescriptorSet::builder()
+                .image_view(res.voxel_texture_array.image_view)];
+            let dw = [vk::WriteDescriptorSetBuilder::new()
                 .dst_set(texture_ds)
                 .dst_binding(0)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .image_info(&ii)
-                .build()];
+                .image_info(&ii)];
             unsafe {
                 rctx.handles.device.update_descriptor_sets(&dw, &[]);
             }
@@ -620,7 +619,7 @@ impl VoxelRenderer {
                 .vmalloc
                 .lock_traced("vmalloc", file!(), line!());
             let qfis = [rctx.handles.queues.get_primary_family()];
-            let bci = vk::BufferCreateInfo::builder()
+            let bci = vk::BufferCreateInfoBuilder::new()
                 .sharing_mode(vk::SharingMode::EXCLUSIVE)
                 .queue_family_indices(&qfis)
                 .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
@@ -637,24 +636,22 @@ impl VoxelRenderer {
 
         let uniform_dss = {
             let lay = [uniform_ds_layout; INFLIGHT_FRAMES as usize];
-            let dai = vk::DescriptorSetAllocateInfo::builder()
+            let dai = vk::DescriptorSetAllocateInfoBuilder::new()
                 .descriptor_pool(ds_pool)
                 .set_layouts(&lay);
             let v = unsafe { rctx.handles.device.allocate_descriptor_sets(&dai) }
                 .expect("Could not allocate voxel UBO descriptors");
             for i in 0..u64::from(INFLIGHT_FRAMES) {
-                let ii = [vk::DescriptorBufferInfo::builder()
+                let ii = [vk::DescriptorBufferInfoBuilder::new()
                     .buffer(ubuffer.buffer)
                     .range(ubo_sz)
-                    .offset(i * ubo_sz)
-                    .build()];
-                let dw = [vk::WriteDescriptorSet::builder()
+                    .offset(i * ubo_sz)];
+                let dw = [vk::WriteDescriptorSetBuilder::new()
                     .dst_set(v[i as usize])
                     .dst_binding(0)
                     .dst_array_element(0)
                     .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-                    .buffer_info(&ii)
-                    .build()];
+                    .buffer_info(&ii)];
                 unsafe {
                     rctx.handles.device.update_descriptor_sets(&dw, &[]);
                 }
@@ -665,7 +662,7 @@ impl VoxelRenderer {
         let pipeline_layout = {
             let pc = vox::VoxelPC::pc_ranges();
             let dsls = [uniform_ds_layout, texture_ds_layout];
-            let lci = vk::PipelineLayoutCreateInfo::builder()
+            let lci = vk::PipelineLayoutCreateInfoBuilder::new()
                 .set_layouts(&dsls)
                 .push_constant_ranges(&pc);
             unsafe {
@@ -688,52 +685,51 @@ impl VoxelRenderer {
                 .expect("Couldn't load fragment voxel shader");
             //
             let cmain = CString::new("main").unwrap();
-            let vss = vk::PipelineShaderStageCreateInfo::builder()
-                .stage(vk::ShaderStageFlags::VERTEX)
+            let vss = vk::PipelineShaderStageCreateInfoBuilder::new()
+                .stage(vk::ShaderStageFlagBits::VERTEX)
                 .module(vs)
                 .name(&cmain);
-            let fss = vk::PipelineShaderStageCreateInfo::builder()
-                .stage(vk::ShaderStageFlags::FRAGMENT)
+            let fss = vk::PipelineShaderStageCreateInfoBuilder::new()
+                .stage(vk::ShaderStageFlagBits::FRAGMENT)
                 .module(fs)
                 .name(&cmain);
-            let shaders = [vss.build(), fss.build()];
+            let shaders = [vss, fss];
             let vox_desc = vox::VoxelVertex::description();
-            let vtxinp = vk::PipelineVertexInputStateCreateInfo::builder()
+            let vtxinp = vk::PipelineVertexInputStateCreateInfoBuilder::new()
                 .vertex_binding_descriptions(&vox_desc.0)
                 .vertex_attribute_descriptions(&vox_desc.1);
-            let inpasm = vk::PipelineInputAssemblyStateCreateInfo::builder()
+            let inpasm = vk::PipelineInputAssemblyStateCreateInfoBuilder::new()
                 .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
                 .primitive_restart_enable(false);
-            let viewport = [rctx.swapchain.dynamic_state.get_viewport()];
-            let scissor = [rctx.swapchain.dynamic_state.get_scissor()];
-            let vwp_info = vk::PipelineViewportStateCreateInfo::builder()
+            let viewport = [rctx.swapchain.dynamic_state.get_viewport().into_builder()];
+            let scissor = [rctx.swapchain.dynamic_state.get_scissor().into_builder()];
+            let vwp_info = vk::PipelineViewportStateCreateInfoBuilder::new()
                 .scissors(&scissor)
                 .viewports(&viewport);
-            let raster = vk::PipelineRasterizationStateCreateInfo::builder()
+            let raster = vk::PipelineRasterizationStateCreateInfoBuilder::new()
                 .depth_clamp_enable(false)
                 .polygon_mode(vk::PolygonMode::FILL)
                 .line_width(1.0)
                 .cull_mode(vk::CullModeFlags::BACK)
                 .front_face(vk::FrontFace::CLOCKWISE)
                 .depth_bias_enable(false);
-            let multisampling = vk::PipelineMultisampleStateCreateInfo::builder()
+            let multisampling = vk::PipelineMultisampleStateCreateInfoBuilder::new()
                 .rasterization_samples(rctx.handles.sample_count)
                 .sample_shading_enable(true)
                 .min_sample_shading(0.2);
             let depthstencil = make_pipe_depthstencil();
-            let blendings = [vk::PipelineColorBlendAttachmentState::builder()
+            let blendings = [vk::PipelineColorBlendAttachmentStateBuilder::new()
                 .color_write_mask(vk::ColorComponentFlags::all())
-                .blend_enable(false)
-                .build()];
-            let blending = vk::PipelineColorBlendStateCreateInfo::builder()
+                .blend_enable(false)];
+            let blending = vk::PipelineColorBlendStateCreateInfoBuilder::new()
                 .logic_op_enable(false)
                 .attachments(&blendings)
                 .blend_constants([0.0, 0.0, 0.0, 0.0]);
             let dyn_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
             let dyn_state =
-                vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dyn_states);
+                vk::PipelineDynamicStateCreateInfoBuilder::new().dynamic_states(&dyn_states);
 
-            let pci = vk::GraphicsPipelineCreateInfo::builder()
+            let pci = vk::GraphicsPipelineCreateInfoBuilder::new()
                 .stages(&shaders)
                 .vertex_input_state(&vtxinp)
                 .input_assembly_state(&inpasm)
@@ -748,11 +744,11 @@ impl VoxelRenderer {
                 .subpass(0)
                 .base_pipeline_handle(vk::Pipeline::null())
                 .base_pipeline_index(-1);
-            let pcis = [pci.build()];
+            let pcis = [pci];
 
             let pipeline = unsafe {
                 rctx.handles.device.create_graphics_pipelines(
-                    rctx.pipeline_cache,
+                    Some(rctx.pipeline_cache),
                     &pcis,
                     allocation_cbs(),
                 )
@@ -762,10 +758,10 @@ impl VoxelRenderer {
             unsafe {
                 rctx.handles
                     .device
-                    .destroy_shader_module(vs, allocation_cbs());
+                    .destroy_shader_module(Some(vs), allocation_cbs());
                 rctx.handles
                     .device
-                    .destroy_shader_module(fs, allocation_cbs());
+                    .destroy_shader_module(Some(fs), allocation_cbs());
             }
             pipeline
         };
@@ -796,28 +792,26 @@ impl VoxelRenderer {
         unsafe {
             handles
                 .device
-                .destroy_pipeline(self.voxel_pipeline, allocation_cbs());
+                .destroy_pipeline(Some(self.voxel_pipeline), allocation_cbs());
             handles
                 .device
-                .destroy_pipeline_layout(self.voxel_pipeline_layout, allocation_cbs());
+                .destroy_pipeline_layout(Some(self.voxel_pipeline_layout), allocation_cbs());
             self.uniform_dss.clear();
             handles
                 .device
-                .destroy_descriptor_pool(self.ds_pool, allocation_cbs());
+                .destroy_descriptor_pool(Some(self.ds_pool), allocation_cbs());
             handles
                 .device
-                .destroy_descriptor_set_layout(self.texture_ds_layout, allocation_cbs());
+                .destroy_descriptor_set_layout(Some(self.texture_ds_layout), allocation_cbs());
             handles
                 .device
-                .destroy_descriptor_set_layout(self.uniform_ds_layout, allocation_cbs());
+                .destroy_descriptor_set_layout(Some(self.uniform_ds_layout), allocation_cbs());
             let mut vmalloc = handles.vmalloc.lock_traced("vmalloc", file!(), line!());
             self.ubuffer.destroy(&mut vmalloc, handles);
             let vpool = Arc::try_unwrap(self.chunk_pool)
                 .or(Err(()))
                 .expect("Voxrender vmalloc pool has remaining users on destruction");
-            vmalloc
-                .destroy_pool(&vpool.0)
-                .expect("Couldn't destroy voxrender vmalloc pool");
+            vmalloc.destroy_pool(&vpool.0);
         }
     }
 
@@ -917,8 +911,7 @@ impl VoxelRenderer {
                 .handles
                 .vmalloc
                 .lock_traced("vmalloc", file!(), line!())
-                .flush_allocation(&ai.0, ubo_start, ubo_sz)
-                .unwrap();
+                .flush_allocation(&ai.0, ubo_start, ubo_sz);
             self.uniform_dss[fctx.inflight_index]
         };
 

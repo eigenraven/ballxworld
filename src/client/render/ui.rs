@@ -4,8 +4,7 @@ use crate::client::render::vkhelpers::{make_pipe_depthstencil, OwnedBuffer, Vulk
 use crate::client::render::vulkan::{allocation_cbs, RenderingHandles, INFLIGHT_FRAMES};
 use crate::client::render::{InPassFrameContext, PrePassFrameContext, RenderingContext};
 use crate::config::Config;
-use ash::version::DeviceV1_0;
-use ash::vk;
+use crate::vk;
 use bxw_util::direction::*;
 use bxw_util::math::*;
 use bxw_util::*;
@@ -17,7 +16,7 @@ use std::borrow::Cow;
 use std::ffi::CString;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::sync::Arc;
-use vk_mem as vma;
+use vk_mem_erupt as vma;
 
 use super::egui_ash_sdl::EguiIntegration;
 
@@ -601,29 +600,26 @@ impl GuiRenderer {
                 resources.voxel_texture_sampler,
             ];
             let binds = [
-                vk::DescriptorSetLayoutBinding::builder()
+                vk::DescriptorSetLayoutBindingBuilder::new()
                     .binding(0)
                     .stage_flags(vk::ShaderStageFlags::FRAGMENT)
                     .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                     .immutable_samplers(&samplers[0..=0])
-                    .descriptor_count(1)
-                    .build(),
-                vk::DescriptorSetLayoutBinding::builder()
+                    .descriptor_count(1),
+                vk::DescriptorSetLayoutBindingBuilder::new()
                     .binding(1)
                     .stage_flags(vk::ShaderStageFlags::FRAGMENT)
                     .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                     .immutable_samplers(&samplers[1..=1])
-                    .descriptor_count(1)
-                    .build(),
-                vk::DescriptorSetLayoutBinding::builder()
+                    .descriptor_count(1),
+                vk::DescriptorSetLayoutBindingBuilder::new()
                     .binding(2)
                     .stage_flags(vk::ShaderStageFlags::FRAGMENT)
                     .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                     .immutable_samplers(&samplers[2..=2])
-                    .descriptor_count(1)
-                    .build(),
+                    .descriptor_count(1),
             ];
-            let dsci = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&binds);
+            let dsci = vk::DescriptorSetLayoutCreateInfoBuilder::new().bindings(&binds);
             unsafe {
                 rctx.handles
                     .device
@@ -633,11 +629,10 @@ impl GuiRenderer {
         };
 
         let ds_pool = {
-            let szs = [vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                descriptor_count: 3,
-            }];
-            let dspi = vk::DescriptorPoolCreateInfo::builder()
+            let szs = [vk::DescriptorPoolSizeBuilder::new()
+                ._type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .descriptor_count(3)];
+            let dspi = vk::DescriptorPoolCreateInfoBuilder::new()
                 .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
                 .max_sets(1)
                 .pool_sizes(&szs);
@@ -651,7 +646,7 @@ impl GuiRenderer {
 
         let texture_ds = {
             let lay = [texture_ds_layout];
-            let dai = vk::DescriptorSetAllocateInfo::builder()
+            let dai = vk::DescriptorSetAllocateInfoBuilder::new()
                 .descriptor_pool(ds_pool)
                 .set_layouts(&lay);
             unsafe { rctx.handles.device.allocate_descriptor_sets(&dai) }
@@ -661,27 +656,23 @@ impl GuiRenderer {
         // write to texture DS
         {
             let ii = [
-                vk::DescriptorImageInfo::builder()
+                vk::DescriptorImageInfoBuilder::new()
                     .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .image_view(resources.gui_atlas.image_view)
-                    .build(),
-                vk::DescriptorImageInfo::builder()
+                    .image_view(resources.gui_atlas.image_view),
+                vk::DescriptorImageInfoBuilder::new()
                     .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .image_view(resources.font_atlas.image_view)
-                    .build(),
-                vk::DescriptorImageInfo::builder()
+                    .image_view(resources.font_atlas.image_view),
+                vk::DescriptorImageInfoBuilder::new()
                     .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .image_view(resources.voxel_texture_array.image_view)
-                    .build(),
+                    .image_view(resources.voxel_texture_array.image_view),
             ];
             let wds = |i: usize| {
-                vk::WriteDescriptorSet::builder()
+                vk::WriteDescriptorSetBuilder::new()
                     .dst_set(texture_ds)
                     .dst_binding(i as u32)
                     .dst_array_element(0)
                     .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                     .image_info(&ii[i..=i])
-                    .build()
             };
             let dw = [wds(0), wds(1), wds(2)];
             unsafe {
@@ -692,7 +683,7 @@ impl GuiRenderer {
         let pipeline_layout = {
             let pc = [];
             let dsls = [texture_ds_layout];
-            let lci = vk::PipelineLayoutCreateInfo::builder()
+            let lci = vk::PipelineLayoutCreateInfoBuilder::new()
                 .set_layouts(&dsls)
                 .push_constant_ranges(&pc);
             unsafe {
@@ -715,41 +706,41 @@ impl GuiRenderer {
                 .expect("Couldn't load fragment GUI shader");
             //
             let cmain = CString::new("main").unwrap();
-            let vss = vk::PipelineShaderStageCreateInfo::builder()
-                .stage(vk::ShaderStageFlags::VERTEX)
+            let vss = vk::PipelineShaderStageCreateInfoBuilder::new()
+                .stage(vk::ShaderStageFlagBits::VERTEX)
                 .module(vs)
                 .name(&cmain);
-            let fss = vk::PipelineShaderStageCreateInfo::builder()
-                .stage(vk::ShaderStageFlags::FRAGMENT)
+            let fss = vk::PipelineShaderStageCreateInfoBuilder::new()
+                .stage(vk::ShaderStageFlagBits::FRAGMENT)
                 .module(fs)
                 .name(&cmain);
-            let shaders = [vss.build(), fss.build()];
+            let shaders = [vss, fss];
             let vox_desc = shaders::UiVertex::description();
-            let vtxinp = vk::PipelineVertexInputStateCreateInfo::builder()
+            let vtxinp = vk::PipelineVertexInputStateCreateInfoBuilder::new()
                 .vertex_binding_descriptions(&vox_desc.0)
                 .vertex_attribute_descriptions(&vox_desc.1);
-            let inpasm = vk::PipelineInputAssemblyStateCreateInfo::builder()
+            let inpasm = vk::PipelineInputAssemblyStateCreateInfoBuilder::new()
                 .topology(vk::PrimitiveTopology::TRIANGLE_STRIP)
                 .primitive_restart_enable(true);
-            let viewport = [rctx.swapchain.dynamic_state.get_viewport()];
-            let scissor = [rctx.swapchain.dynamic_state.get_scissor()];
-            let vwp_info = vk::PipelineViewportStateCreateInfo::builder()
+            let viewport = [rctx.swapchain.dynamic_state.get_viewport().into_builder()];
+            let scissor = [rctx.swapchain.dynamic_state.get_scissor().into_builder()];
+            let vwp_info = vk::PipelineViewportStateCreateInfoBuilder::new()
                 .scissors(&scissor)
                 .viewports(&viewport);
-            let raster = vk::PipelineRasterizationStateCreateInfo::builder()
+            let raster = vk::PipelineRasterizationStateCreateInfoBuilder::new()
                 .depth_clamp_enable(false)
                 .polygon_mode(vk::PolygonMode::FILL)
                 .line_width(1.0)
                 .cull_mode(vk::CullModeFlags::NONE)
                 .front_face(vk::FrontFace::CLOCKWISE)
                 .depth_bias_enable(false);
-            let multisampling = vk::PipelineMultisampleStateCreateInfo::builder()
+            let multisampling = vk::PipelineMultisampleStateCreateInfoBuilder::new()
                 .rasterization_samples(rctx.handles.sample_count)
                 .sample_shading_enable(false);
             let mut depthstencil = make_pipe_depthstencil();
             depthstencil.depth_test_enable = vk::FALSE;
             depthstencil.depth_write_enable = vk::FALSE;
-            let blendings = [vk::PipelineColorBlendAttachmentState::builder()
+            let blendings = [vk::PipelineColorBlendAttachmentStateBuilder::new()
                 .color_write_mask(vk::ColorComponentFlags::all())
                 .blend_enable(true)
                 .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
@@ -757,17 +748,16 @@ impl GuiRenderer {
                 .color_blend_op(vk::BlendOp::ADD)
                 .src_alpha_blend_factor(vk::BlendFactor::ONE)
                 .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
-                .alpha_blend_op(vk::BlendOp::ADD)
-                .build()];
-            let blending = vk::PipelineColorBlendStateCreateInfo::builder()
+                .alpha_blend_op(vk::BlendOp::ADD)];
+            let blending = vk::PipelineColorBlendStateCreateInfoBuilder::new()
                 .logic_op_enable(false)
                 .attachments(&blendings)
                 .blend_constants([0.0, 0.0, 0.0, 0.0]);
             let dyn_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
             let dyn_state =
-                vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dyn_states);
+                vk::PipelineDynamicStateCreateInfoBuilder::new().dynamic_states(&dyn_states);
 
-            let pci = vk::GraphicsPipelineCreateInfo::builder()
+            let pci = vk::GraphicsPipelineCreateInfoBuilder::new()
                 .stages(&shaders)
                 .vertex_input_state(&vtxinp)
                 .input_assembly_state(&inpasm)
@@ -782,11 +772,11 @@ impl GuiRenderer {
                 .subpass(0)
                 .base_pipeline_handle(vk::Pipeline::null())
                 .base_pipeline_index(-1);
-            let pcis = [pci.build()];
+            let pcis = [pci];
 
             let pipeline = unsafe {
                 rctx.handles.device.create_graphics_pipelines(
-                    rctx.pipeline_cache,
+                    Some(rctx.pipeline_cache),
                     &pcis,
                     allocation_cbs(),
                 )
@@ -796,10 +786,10 @@ impl GuiRenderer {
             unsafe {
                 rctx.handles
                     .device
-                    .destroy_shader_module(vs, allocation_cbs());
+                    .destroy_shader_module(Some(vs), allocation_cbs());
                 rctx.handles
                     .device
-                    .destroy_shader_module(fs, allocation_cbs());
+                    .destroy_shader_module(Some(fs), allocation_cbs());
             }
             pipeline
         };
@@ -833,7 +823,7 @@ impl GuiRenderer {
 
     fn new_buffers(rctx: &RenderingContext, num_squares: usize) -> (OwnedBuffer, OwnedBuffer) {
         let qfs = [rctx.handles.queues.get_primary_family()];
-        let vbi = vk::BufferCreateInfo::builder()
+        let vbi = vk::BufferCreateInfoBuilder::new()
             .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
             .size((num_squares * 4 * std::mem::size_of::<shaders::UiVertex>()) as u64)
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
@@ -863,16 +853,16 @@ impl GuiRenderer {
             self.egui_integ.destroy(handles);
             handles
                 .device
-                .destroy_pipeline(self.pipeline, allocation_cbs());
+                .destroy_pipeline(Some(self.pipeline), allocation_cbs());
             handles
                 .device
-                .destroy_pipeline_layout(self.pipeline_layout, allocation_cbs());
+                .destroy_pipeline_layout(Some(self.pipeline_layout), allocation_cbs());
             handles
                 .device
-                .destroy_descriptor_pool(self.ds_pool, allocation_cbs());
+                .destroy_descriptor_pool(Some(self.ds_pool), allocation_cbs());
             handles
                 .device
-                .destroy_descriptor_set_layout(self.texture_ds_layout, allocation_cbs());
+                .destroy_descriptor_set_layout(Some(self.texture_ds_layout), allocation_cbs());
             let mut vmalloc = handles.vmalloc.lock_traced("vmalloc", file!(), line!());
             for (mut b1, mut b2) in self.gui_buffers.drain(..) {
                 b1.destroy(&mut vmalloc, handles);
@@ -937,16 +927,14 @@ impl GuiRenderer {
                     self.gui_vtx_write.indxs.len(),
                 );
                 let ranges = [
-                    vk::MappedMemoryRange::builder()
+                    vk::MappedMemoryRangeBuilder::new()
                         .size(vai.get_size() as u64)
                         .offset(vai.get_offset() as u64)
-                        .memory(vai.get_device_memory())
-                        .build(),
-                    vk::MappedMemoryRange::builder()
+                        .memory(vai.get_device_memory()),
+                    vk::MappedMemoryRangeBuilder::new()
                         .size(iai.get_size() as u64)
                         .offset(iai.get_offset() as u64)
-                        .memory(iai.get_device_memory())
-                        .build(),
+                        .memory(iai.get_device_memory()),
                 ];
                 fctx.rctx
                     .handles
@@ -989,7 +977,7 @@ impl GuiRenderer {
 
 pub mod shaders {
     use crate::offset_of;
-    use ash::vk;
+    use crate::vk;
     use std::mem;
 
     #[derive(Copy, Clone, Debug, Default)]
@@ -1003,39 +991,42 @@ pub mod shaders {
 
     impl UiVertex {
         pub fn description() -> (
-            [vk::VertexInputBindingDescription; 1],
-            [vk::VertexInputAttributeDescription; 4],
+            [vk::VertexInputBindingDescriptionBuilder<'static>; 1],
+            [vk::VertexInputAttributeDescriptionBuilder<'static>; 4],
         ) {
-            let bind_dsc = [vk::VertexInputBindingDescription::builder()
+            let bind_dsc = [vk::VertexInputBindingDescriptionBuilder::new()
                 .binding(0)
                 .stride(mem::size_of::<Self>() as u32)
-                .input_rate(vk::VertexInputRate::VERTEX)
-                .build()];
+                .input_rate(vk::VertexInputRate::VERTEX)];
             let attr_dsc = [
                 vk::VertexInputAttributeDescription {
                     binding: 0,
                     location: 0,
                     format: vk::Format::R32G32_SFLOAT,
                     offset: offset_of!(Self, position) as u32,
-                },
+                }
+                .into_builder(),
                 vk::VertexInputAttributeDescription {
                     binding: 0,
                     location: 1,
                     format: vk::Format::R32G32B32A32_SFLOAT,
                     offset: offset_of!(Self, color) as u32,
-                },
+                }
+                .into_builder(),
                 vk::VertexInputAttributeDescription {
                     binding: 0,
                     location: 2,
                     format: vk::Format::R32G32B32_SFLOAT,
                     offset: offset_of!(Self, texcoord) as u32,
-                },
+                }
+                .into_builder(),
                 vk::VertexInputAttributeDescription {
                     binding: 0,
                     location: 3,
                     format: vk::Format::R32_SINT,
                     offset: offset_of!(Self, texselect) as u32,
-                },
+                }
+                .into_builder(),
             ];
             (bind_dsc, attr_dsc)
         }

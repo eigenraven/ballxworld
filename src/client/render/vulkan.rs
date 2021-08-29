@@ -3,12 +3,11 @@ use crate::client::render::vkhelpers::{
 };
 use crate::client::world::ClientWorld;
 use crate::config::Config;
-use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
-use ash::vk;
-use ash::vk::make_version;
-use ash::vk::Handle;
+use crate::vk;
 use bxw_util::debug_data::DEBUG_DATA;
 use bxw_util::*;
+use erupt::vk::EXT_DEBUG_UTILS_EXTENSION_NAME;
+use erupt::{DeviceLoader, EntryLoader, InstanceLoader};
 use num_traits::clamp;
 use parking_lot::{Mutex, MutexGuard};
 use sdl2::video::Window;
@@ -19,7 +18,7 @@ use std::mem::ManuallyDrop;
 use std::os::raw::c_char;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Weak};
-use vk_mem as vma;
+use vk_mem_erupt as vma;
 
 pub fn allocation_cbs() -> Option<&'static vk::AllocationCallbacks> {
     None
@@ -82,18 +81,15 @@ pub type VDODestroyQueue = Vec<Box<dyn VulkanDeviceObject + Send>>;
 
 #[derive(Clone)]
 pub struct RenderingHandles {
-    pub entry: ash::Entry,
-    pub instance: ash::Instance,
-    pub ext_surface: ash::extensions::khr::Surface,
-    pub ext_swapchain: ash::extensions::khr::Swapchain,
-    pub debug_utils: Option<ash::extensions::ext::DebugUtils>,
+    pub entry: Arc<EntryLoader>,
+    pub instance: Arc<InstanceLoader>,
     pub ext_debug: Option<DebugExts>,
     pub surface: vk::SurfaceKHR,
     pub surface_format: vk::SurfaceFormatKHR,
     pub physical: vk::PhysicalDevice,
     pub physical_limits: vk::PhysicalDeviceLimits,
-    pub sample_count: vk::SampleCountFlags,
-    pub device: ash::Device,
+    pub sample_count: vk::SampleCountFlagBits,
+    pub device: Arc<DeviceLoader>,
     pub queues: Arc<Queues>,
     pub vmalloc: Arc<Mutex<vma::Allocator>>,
     pub mainpass: vk::RenderPass,
@@ -162,22 +158,28 @@ impl<'r, 'cw, Stage: FrameStage> FrameContext<'r, 'cw, Stage> {
     where
         S: Into<Vec<u8>>,
     {
-        if let Some(ext_debug) = self.rctx.handles.debug_utils.as_ref() {
+        if self.rctx.handles.ext_debug.is_some() {
             let name_slice = name_fn();
             let name = CString::new(name_slice).unwrap();
-            let label = vk::DebugUtilsLabelEXT::builder()
+            let label = vk::DebugUtilsLabelEXTBuilder::new()
                 .color(color)
                 .label_name(name.as_c_str());
             unsafe {
-                ext_debug.cmd_begin_debug_utils_label(self.cmd, &label);
+                self.rctx
+                    .handles
+                    .device
+                    .cmd_begin_debug_utils_label_ext(self.cmd, &label);
             }
         }
     }
 
     pub fn end_region(&self) {
-        if let Some(ext_debug) = self.rctx.handles.debug_utils.as_ref() {
+        if self.rctx.handles.ext_debug.is_some() {
             unsafe {
-                ext_debug.cmd_end_debug_utils_label(self.cmd);
+                self.rctx
+                    .handles
+                    .device
+                    .cmd_end_debug_utils_label_ext(self.cmd);
             }
         }
     }
@@ -186,14 +188,17 @@ impl<'r, 'cw, Stage: FrameStage> FrameContext<'r, 'cw, Stage> {
     where
         S: Into<Vec<u8>>,
     {
-        if let Some(ext_debug) = self.rctx.handles.debug_utils.as_ref() {
+        if self.rctx.handles.ext_debug.is_some() {
             let name_slice = name_fn();
             let name = CString::new(name_slice).unwrap();
-            let label = vk::DebugUtilsLabelEXT::builder()
+            let label = vk::DebugUtilsLabelEXTBuilder::new()
                 .color(color)
                 .label_name(name.as_c_str());
             unsafe {
-                ext_debug.cmd_insert_debug_utils_label(self.cmd, &label);
+                self.rctx
+                    .handles
+                    .device
+                    .cmd_insert_debug_utils_label_ext(self.cmd, &label);
             }
         }
     }
@@ -203,8 +208,9 @@ pub type PrePassFrameContext<'r, 'cw> = FrameContext<'r, 'cw, PrePassStage>;
 pub type InPassFrameContext<'r, 'cw> = FrameContext<'r, 'cw, InPassStage>;
 pub type PostPassFrameContext<'r, 'cw> = FrameContext<'r, 'cw, PostPassStage>;
 
-extern "system" fn debug_msg_callback(
-    msg_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+#[allow(unused_unsafe)]
+unsafe extern "system" fn debug_msg_callback(
+    msg_severity: vk::DebugUtilsMessageSeverityFlagBitsEXT,
     _msg_type: vk::DebugUtilsMessageTypeFlagsEXT,
     cb_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
     _udata: *mut c_void,
@@ -212,16 +218,16 @@ extern "system" fn debug_msg_callback(
     if cb_data.is_null() {
         return vk::FALSE;
     }
-    if msg_severity == vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE {
+    if msg_severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::VERBOSE_EXT {
         return vk::FALSE;
     }
     let cb_data: &vk::DebugUtilsMessengerCallbackDataEXT = unsafe { &*cb_data };
     use log::Level;
     let log_severity = match msg_severity {
-        vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE => Level::Debug,
-        vk::DebugUtilsMessageSeverityFlagsEXT::INFO => Level::Info,
-        vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => Level::Warn,
-        vk::DebugUtilsMessageSeverityFlagsEXT::ERROR => Level::Error,
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::VERBOSE_EXT => Level::Debug,
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::INFO_EXT => Level::Info,
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::WARNING_EXT => Level::Warn,
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::ERROR_EXT => Level::Error,
         _ => Level::Warn,
     };
     let str_msg = format!(
@@ -247,18 +253,21 @@ impl RenderingHandles {
             window.fullscreen();
         }
         let window = window.build().expect("Failed to create the game window");
-        let entry =
-            unsafe { ash::Entry::new() }.expect("Can't load Vulkan system library entrypoints");
-        let (instance, debug_utils, ext_debug) = Self::create_instance(&entry, &window, cfg);
-        let ext_surface = ash::extensions::khr::Surface::new(&entry, &instance);
+        let entry = Arc::new(
+            erupt::EntryLoader::new().expect("Can't load Vulkan system library entrypoints"),
+        );
+        if entry.instance_version() < vk::make_api_version(0, 1, 2, 0) {
+            panic!("Vulkan 1.2 not found");
+        }
+        let (instance, ext_debug) = Self::create_instance(&entry, &window, cfg);
         let surface = {
-            let sdlvki = instance.handle().as_raw() as sdl2::video::VkInstance;
+            let sdlvki = instance.handle.object_handle() as sdl2::video::VkInstance;
             let rsurf = window
                 .vulkan_create_surface(sdlvki)
                 .expect("Couldn't create VK surface") as u64;
-            vk::SurfaceKHR::from_raw(rsurf)
+            vk::SurfaceKHR(rsurf)
         };
-        let physical = unsafe { instance.enumerate_physical_devices() }
+        let physical = unsafe { instance.enumerate_physical_devices(None) }
             .expect("Could not enumerate Vulkan physical devices")
             .into_iter()
             .next()
@@ -268,7 +277,8 @@ impl RenderingHandles {
         let pname = unsafe { CStr::from_ptr(pprop.device_name.as_ptr()) }.to_string_lossy();
 
         log::info!("Choosing device {}", pname);
-        let qfamilies = unsafe { instance.get_physical_device_queue_family_properties(physical) };
+        let qfamilies =
+            unsafe { instance.get_physical_device_queue_family_properties(physical, None) };
         for family in qfamilies.iter() {
             log::debug!(
                 "Found a queue family with {:?} queue(s)",
@@ -283,8 +293,9 @@ impl RenderingHandles {
                 q.queue_flags
                     .contains(vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE)
                     && unsafe {
-                        ext_surface
-                            .get_physical_device_surface_support(physical, *i as u32, surface)
+                        instance
+                            .get_physical_device_surface_support_khr(physical, *i as u32, surface)
+                            .result()
                             .unwrap_or(false)
                     }
             })
@@ -292,10 +303,12 @@ impl RenderingHandles {
             .expect("couldn't find a graphical queue family");
         let queue_cnt;
         let device = {
-            let raw_exts: Vec<&'static CStr> = vec![ash::extensions::khr::Swapchain::name()];
+            let raw_exts: Vec<&'static CStr> =
+                vec![unsafe { CStr::from_ptr(vk::KHR_SWAPCHAIN_EXTENSION_NAME) }];
             let exts: Vec<*const c_char> = raw_exts.iter().map(|s| s.as_ptr()).collect();
-            let avail_exts = unsafe { instance.enumerate_device_extension_properties(physical) }
-                .expect("Can't enumerate VkDevice extensions");
+            let avail_exts =
+                unsafe { instance.enumerate_device_extension_properties(physical, None, None) }
+                    .expect("Can't enumerate VkDevice extensions");
             for ext in raw_exts.iter() {
                 let available = avail_exts.iter().any(|e| {
                     let en = unsafe { CStr::from_ptr(e.extension_name.as_ptr()) };
@@ -308,30 +321,29 @@ impl RenderingHandles {
                     );
                 }
             }
-            let features = vk::PhysicalDeviceFeatures::builder()
+            let features = vk::PhysicalDeviceFeaturesBuilder::new()
                 .sampler_anisotropy(true)
                 .sample_rate_shading(true);
 
             queue_cnt = queue_family.1.queue_count.min(2);
-            let priorities: Vec<f32> = if queue_cnt == 1 {
+            let priorities: Vec<std::os::raw::c_float> = if queue_cnt == 1 {
                 vec![1.0]
             } else {
                 vec![0.75, 0.25]
             };
-            let queue_families = vec![vk::DeviceQueueCreateInfo {
-                queue_family_index: queue_family.0,
-                queue_count: queue_cnt,
-                p_queue_priorities: priorities.as_ptr(),
-                ..Default::default()
-            }];
+            let queue_families = vec![vk::DeviceQueueCreateInfoBuilder::new()
+                .queue_family_index(queue_family.0)
+                .queue_priorities(&priorities)];
 
-            let dci = vk::DeviceCreateInfo::builder()
+            let dci = vk::DeviceCreateInfoBuilder::new()
                 .enabled_extension_names(&exts)
                 .enabled_features(&features)
                 .queue_create_infos(&queue_families);
 
-            unsafe { instance.create_device(physical, &dci, None) }
-                .expect("Couldn't create Vulkan device")
+            Arc::new(
+                unsafe { DeviceLoader::new(&instance, physical, &dci, allocation_cbs()) }
+                    .expect("Couldn't create Vulkan device"),
+            )
         };
         let queues = if queue_cnt > 1 {
             if cfg.debug_logging {
@@ -365,52 +377,51 @@ impl RenderingHandles {
             vma::Allocator::new(&ai).expect("Could not create Vulkan memory allocator")
         };
 
-        let ext_swapchain = ash::extensions::khr::Swapchain::new(&instance, &device);
-
-        let formats = unsafe { ext_surface.get_physical_device_surface_formats(physical, surface) }
-            .expect("Failed to get surface formats");
+        let formats =
+            unsafe { instance.get_physical_device_surface_formats_khr(physical, surface, None) }
+                .expect("Failed to get surface formats");
         let surface_format = *formats
             .iter()
             .find(|f| {
                 f.format == vk::Format::B8G8R8A8_UNORM
-                    && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
+                    && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR_KHR
             })
             .or_else(|| {
                 formats.iter().find(|f| {
                     f.format == vk::Format::R8G8B8A8_UNORM
-                        && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
+                        && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR_KHR
                 })
             })
             .unwrap_or(&formats[0]);
 
         let sample_count = {
             let target = cfg.render_samples;
-            let mut samples = vk::SampleCountFlags::TYPE_1;
+            let mut samples = vk::SampleCountFlagBits::_1;
             let lim = physical_limits.framebuffer_color_sample_counts
                 & physical_limits.sampled_image_depth_sample_counts;
-            if target >= 64 && lim.contains(vk::SampleCountFlags::TYPE_64) {
-                samples = vk::SampleCountFlags::TYPE_64;
+            if target >= 64 && lim.contains(vk::SampleCountFlags::_64) {
+                samples = vk::SampleCountFlagBits::_64;
             }
-            if target >= 32 && lim.contains(vk::SampleCountFlags::TYPE_32) {
-                samples = vk::SampleCountFlags::TYPE_32;
+            if target >= 32 && lim.contains(vk::SampleCountFlags::_32) {
+                samples = vk::SampleCountFlagBits::_32;
             }
-            if target >= 16 && lim.contains(vk::SampleCountFlags::TYPE_16) {
-                samples = vk::SampleCountFlags::TYPE_16;
+            if target >= 16 && lim.contains(vk::SampleCountFlags::_16) {
+                samples = vk::SampleCountFlagBits::_16;
             }
-            if target >= 8 && lim.contains(vk::SampleCountFlags::TYPE_8) {
-                samples = vk::SampleCountFlags::TYPE_8;
+            if target >= 8 && lim.contains(vk::SampleCountFlags::_8) {
+                samples = vk::SampleCountFlagBits::_8;
             }
-            if target >= 4 && lim.contains(vk::SampleCountFlags::TYPE_4) {
-                samples = vk::SampleCountFlags::TYPE_4;
+            if target >= 4 && lim.contains(vk::SampleCountFlags::_4) {
+                samples = vk::SampleCountFlagBits::_4;
             }
-            if target >= 2 && lim.contains(vk::SampleCountFlags::TYPE_2) {
-                samples = vk::SampleCountFlags::TYPE_2;
+            if target >= 2 && lim.contains(vk::SampleCountFlags::_2) {
+                samples = vk::SampleCountFlagBits::_2;
             }
             samples
         };
 
         let mainpass = {
-            let color_at = vk::AttachmentDescription::builder()
+            let color_at = vk::AttachmentDescriptionBuilder::new()
                 .format(surface_format.format)
                 .samples(sample_count)
                 .load_op(vk::AttachmentLoadOp::CLEAR)
@@ -418,9 +429,8 @@ impl RenderingHandles {
                 .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
                 .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
                 .initial_layout(vk::ImageLayout::UNDEFINED)
-                .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                .build();
-            let depth_at = vk::AttachmentDescription::builder()
+                .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+            let depth_at = vk::AttachmentDescriptionBuilder::new()
                 .format(vk::Format::D32_SFLOAT_S8_UINT)
                 .samples(sample_count)
                 .load_op(vk::AttachmentLoadOp::CLEAR)
@@ -428,34 +438,29 @@ impl RenderingHandles {
                 .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
                 .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
                 .initial_layout(vk::ImageLayout::UNDEFINED)
-                .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-                .build();
-            let resolve_at = vk::AttachmentDescription::builder()
+                .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+            let resolve_at = vk::AttachmentDescriptionBuilder::new()
                 .format(surface_format.format)
-                .samples(vk::SampleCountFlags::TYPE_1)
+                .samples(vk::SampleCountFlagBits::_1)
                 .load_op(vk::AttachmentLoadOp::DONT_CARE)
                 .store_op(vk::AttachmentStoreOp::STORE)
                 .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
                 .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
                 .initial_layout(vk::ImageLayout::UNDEFINED)
-                .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-                .build();
-            let color_ref = vk::AttachmentReference::builder()
+                .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
+            let color_ref = vk::AttachmentReferenceBuilder::new()
                 .attachment(0)
-                .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                .build();
-            let depth_ref = vk::AttachmentReference::builder()
+                .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+            let depth_ref = vk::AttachmentReferenceBuilder::new()
                 .attachment(1)
-                .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-                .build();
-            let resolve_ref = vk::AttachmentReference::builder()
+                .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+            let resolve_ref = vk::AttachmentReferenceBuilder::new()
                 .attachment(2)
-                .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                .build();
+                .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
             let color_refs = [color_ref];
             let resolve_refs = [resolve_ref];
             let ats = [color_at, depth_at, resolve_at];
-            let deps = [vk::SubpassDependency::builder()
+            let deps = [vk::SubpassDependencyBuilder::new()
                 .src_subpass(vk::SUBPASS_EXTERNAL)
                 .dst_subpass(0)
                 .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
@@ -464,25 +469,23 @@ impl RenderingHandles {
                 .dst_access_mask(
                     vk::AccessFlags::COLOR_ATTACHMENT_READ
                         | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-                )
-                .build()];
-            let subpass = vk::SubpassDescription::builder()
+                )];
+            let subpass = vk::SubpassDescriptionBuilder::new()
                 .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
                 .color_attachments(&color_refs)
                 .depth_stencil_attachment(&depth_ref)
-                .resolve_attachments(&resolve_refs)
-                .build();
+                .resolve_attachments(&resolve_refs);
             let subpasses = [subpass];
-            let rpci = vk::RenderPassCreateInfo::builder()
+            let rpci = vk::RenderPassCreateInfoBuilder::new()
                 .attachments(&ats)
                 .subpasses(&subpasses)
                 .dependencies(&deps);
-            unsafe { device.create_render_pass(&rpci, allocation_cbs()) }
+            unsafe { device.create_render_pass(&rpci.build(), allocation_cbs()) }
                 .expect("Could not create Vulkan renderpass")
         };
 
         let oneoff_cmd_pool = {
-            let cpci = vk::CommandPoolCreateInfo::builder()
+            let cpci = vk::CommandPoolCreateInfoBuilder::new()
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT)
                 .queue_family_index(queues.get_primary_family());
             unsafe { device.create_command_pool(&cpci, allocation_cbs()) }
@@ -497,9 +500,6 @@ impl RenderingHandles {
             Self {
                 entry,
                 instance,
-                ext_surface,
-                ext_swapchain,
-                debug_utils,
                 ext_debug,
                 surface,
                 surface_format,
@@ -519,23 +519,21 @@ impl RenderingHandles {
     }
 
     fn create_instance(
-        entry: &ash::Entry,
+        entry: &EntryLoader,
         window: &Window,
         cfg: &Config,
-    ) -> (
-        ash::Instance,
-        Option<ash::extensions::ext::DebugUtils>,
-        Option<DebugExts>,
-    ) {
+    ) -> (Arc<InstanceLoader>, Option<DebugExts>) {
         let app_name = CString::new("BallX World").unwrap();
         let engine_name = CString::new("BallX World Engine").unwrap();
 
         let sdl_exts = window
             .vulkan_instance_extensions()
             .expect("Couldn't get a list of the required VK instance extensions");
-        let avail_exts = entry
-            .enumerate_instance_extension_properties()
-            .expect("Could not enumerate available Vulkan extensions");
+        let avail_exts = unsafe {
+            entry
+                .enumerate_instance_extension_properties(None, None)
+                .expect("Could not enumerate available Vulkan extensions")
+        };
         let avail_enames: Vec<&CStr> = avail_exts
             .iter()
             .map(|e| unsafe { CStr::from_ptr(e.extension_name.as_ptr()) })
@@ -554,8 +552,7 @@ impl RenderingHandles {
             }
         }
 
-        let avail_layers = entry
-            .enumerate_instance_layer_properties()
+        let avail_layers = unsafe { entry.enumerate_instance_layer_properties(None) }
             .expect("Could not enumerate available Vulkan layers");
         let avail_lnames = avail_layers
             .iter()
@@ -564,7 +561,7 @@ impl RenderingHandles {
 
         let mut has_debug = false;
         if cfg.vk_debug_layers || cfg.dbg_renderdoc {
-            let duname = ash::extensions::ext::DebugUtils::name();
+            let duname = unsafe { CStr::from_ptr(EXT_DEBUG_UTILS_EXTENSION_NAME) };
             if avail_enames.contains(&duname) {
                 raw_exts.push(duname.to_owned());
                 has_debug = true;
@@ -580,28 +577,30 @@ impl RenderingHandles {
         let enabled_exts: Vec<*const c_char> = raw_exts.iter().map(|s| s.as_ptr()).collect();
         let enabled_layers: Vec<*const c_char> = raw_layers.iter().map(|s| s.as_ptr()).collect();
 
-        let ai = vk::ApplicationInfo::builder()
-            .api_version(make_version(1, 1, 0))
-            .application_version(make_version(1, 0, 0))
-            .engine_version(make_version(1, 0, 0))
+        let ai = vk::ApplicationInfoBuilder::new()
+            .api_version(vk::make_api_version(0, 1, 1, 0))
+            .application_version(vk::make_api_version(0, 1, 0, 0))
+            .engine_version(vk::make_api_version(0, 1, 0, 0))
             .application_name(&app_name)
             .engine_name(&engine_name);
-        let ici = vk::InstanceCreateInfo::builder()
+        let ici = vk::InstanceCreateInfoBuilder::new()
             .application_info(&ai)
             .enabled_layer_names(&enabled_layers)
             .enabled_extension_names(&enabled_exts);
-        let instance = unsafe { entry.create_instance(&ici, allocation_cbs()) }
-            .expect("Couldn't create Vulkan instance");
+        let instance = Arc::new(
+            unsafe { InstanceLoader::new(entry, &ici, allocation_cbs()) }
+                .expect("Couldn't create Vulkan instance"),
+        );
 
         if has_debug {
-            let utils = ash::extensions::ext::DebugUtils::new(entry, &instance);
             let ext_debug = if !cfg.dbg_renderdoc {
-                let mci = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+                let mci = vk::DebugUtilsMessengerCreateInfoEXTBuilder::new()
                     .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::all())
                     .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
                     .pfn_user_callback(Some(debug_msg_callback));
-                let msg = unsafe { utils.create_debug_utils_messenger(&mci, allocation_cbs()) }
-                    .expect("Couldn't create debug messenger");
+                let msg =
+                    unsafe { instance.create_debug_utils_messenger_ext(&mci, allocation_cbs()) }
+                        .expect("Couldn't create debug messenger");
                 log::debug!("Created Vulkan debug messenger");
                 Some(DebugExts {
                     debug_messenger: msg,
@@ -609,9 +608,9 @@ impl RenderingHandles {
             } else {
                 None
             };
-            (instance, Some(utils), ext_debug)
+            (instance, ext_debug)
         } else {
-            (instance, None, None)
+            (instance, None)
         }
     }
 
@@ -627,9 +626,10 @@ impl RenderingHandles {
         let smci = vk::ShaderModuleCreateInfo {
             p_code: spv.as_ptr() as *const u32,
             code_size: spv.len(),
-            ..vk::ShaderModuleCreateInfo::builder().build()
+            ..vk::ShaderModuleCreateInfoBuilder::new().build()
         };
         let sm = unsafe { self.device.create_shader_module(&smci, allocation_cbs()) }
+            .result()
             .unwrap_or_else(|e| panic!("Could not create shader module from `{}`: {}", path, e));
         Ok(sm)
     }
@@ -666,8 +666,6 @@ impl RenderingHandles {
         self.flush_destroy_queue();
         let Self {
             instance,
-            ext_surface,
-            debug_utils,
             ext_debug,
             surface,
             device,
@@ -678,7 +676,7 @@ impl RenderingHandles {
         } = self;
         if mainpass != vk::RenderPass::null() {
             unsafe {
-                device.destroy_render_pass(mainpass, allocation_cbs());
+                device.destroy_render_pass(Some(mainpass), allocation_cbs());
             }
         }
         let mut vmalloc = Arc::try_unwrap(vmalloc)
@@ -687,22 +685,23 @@ impl RenderingHandles {
 
         vmalloc.destroy();
         unsafe {
-            ext_surface.destroy_surface(surface, allocation_cbs());
+            instance.destroy_surface_khr(Some(surface), allocation_cbs());
         }
         let oneoff_cmd_pool = Arc::try_unwrap(oneoff_cmd_pool)
             .unwrap_or_else(|_| panic!("Multiple references to oneoff_cmd_pool"))
             .into_inner();
         unsafe {
-            device.destroy_command_pool(oneoff_cmd_pool, allocation_cbs());
+            device.destroy_command_pool(Some(oneoff_cmd_pool), allocation_cbs());
         }
         unsafe {
             device.destroy_device(allocation_cbs());
         }
         if let Some(ext_debug) = ext_debug {
             unsafe {
-                debug_utils
-                    .unwrap()
-                    .destroy_debug_utils_messenger(ext_debug.debug_messenger, allocation_cbs());
+                instance.destroy_debug_utils_messenger_ext(
+                    Some(ext_debug.debug_messenger),
+                    allocation_cbs(),
+                );
             }
         }
         unsafe {
@@ -738,7 +737,7 @@ impl Swapchain {
         for fence in self.inflight_fences.drain(..) {
             if fence != vk::Fence::null() {
                 unsafe {
-                    handles.device.destroy_fence(fence, allocation_cbs());
+                    handles.device.destroy_fence(Some(fence), allocation_cbs());
                 }
             }
         }
@@ -747,25 +746,29 @@ impl Swapchain {
             .drain(..)
             .chain(self.inflight_image_available_semaphores.drain(..))
         {
-            if semaphore != vk::Semaphore::null() {
+            if !semaphore.is_null() {
                 unsafe {
                     handles
                         .device
-                        .destroy_semaphore(semaphore, allocation_cbs());
+                        .destroy_semaphore(Some(semaphore), allocation_cbs());
                 }
             }
         }
         for fb in self.framebuffers.drain(..) {
-            if fb != vk::Framebuffer::null() {
+            if !fb.is_null() {
                 unsafe {
-                    handles.device.destroy_framebuffer(fb, allocation_cbs());
+                    handles
+                        .device
+                        .destroy_framebuffer(Some(fb), allocation_cbs());
                 }
             }
         }
         for iv in self.swapimageviews.drain(..) {
-            if iv != vk::ImageView::null() {
+            if !iv.is_null() {
                 unsafe {
-                    handles.device.destroy_image_view(iv, allocation_cbs());
+                    handles
+                        .device
+                        .destroy_image_view(Some(iv), allocation_cbs());
                 }
             }
         }
@@ -778,11 +781,11 @@ impl Swapchain {
             &mut handles.vmalloc.lock_traced("vmalloc", file!(), line!()),
             handles,
         );
-        if destroy_swapchain && self.swapchain != vk::SwapchainKHR::null() {
+        if destroy_swapchain && !self.swapchain.is_null() {
             unsafe {
                 handles
-                    .ext_swapchain
-                    .destroy_swapchain(self.swapchain, allocation_cbs());
+                    .device
+                    .destroy_swapchain_khr(Some(self.swapchain), allocation_cbs());
             }
             self.swapchain = vk::SwapchainKHR::null();
         }
@@ -790,17 +793,23 @@ impl Swapchain {
 
     fn recreate_swapchain(&mut self, window: &Window, handles: &RenderingHandles, cfg: &Config) {
         self.destroy_vk_objs(handles, false);
-        let ext_surface = &handles.ext_surface;
-        let ext_swapchain = &handles.ext_swapchain;
         let dimensions = window.vulkan_drawable_size();
 
         let caps = unsafe {
-            ext_surface.get_physical_device_surface_capabilities(handles.physical, handles.surface)
+            handles
+                .instance
+                .get_physical_device_surface_capabilities_khr(handles.physical, handles.surface)
         }
         .expect("Failed to get surface capabilities");
 
         let present_modes = unsafe {
-            ext_surface.get_physical_device_surface_present_modes(handles.physical, handles.surface)
+            handles
+                .instance
+                .get_physical_device_surface_present_modes_khr(
+                    handles.physical,
+                    handles.surface,
+                    None,
+                )
         }
         .expect("Failed to get surface present modes");
 
@@ -809,16 +818,16 @@ impl Swapchain {
                 present_modes
                     .iter()
                     .copied()
-                    .find(|p| *p == vk::PresentModeKHR::MAILBOX)
+                    .find(|p| *p == vk::PresentModeKHR::MAILBOX_KHR)
                     .or_else(|| {
                         present_modes
                             .iter()
                             .copied()
-                            .find(|p| *p == vk::PresentModeKHR::IMMEDIATE)
+                            .find(|p| *p == vk::PresentModeKHR::IMMEDIATE_KHR)
                     })
-                    .unwrap_or(vk::PresentModeKHR::FIFO)
+                    .unwrap_or(vk::PresentModeKHR::FIFO_KHR)
             } else {
-                vk::PresentModeKHR::FIFO
+                vk::PresentModeKHR::FIFO_KHR
             }
         };
 
@@ -853,7 +862,7 @@ impl Swapchain {
             );
         }
 
-        let sci = vk::SwapchainCreateInfoKHR::builder()
+        let sci = vk::SwapchainCreateInfoKHRBuilder::new()
             .surface(handles.surface)
             .min_image_count(image_count)
             .image_color_space(handles.surface_format.color_space)
@@ -863,24 +872,27 @@ impl Swapchain {
             .image_sharing_mode(image_sharing_mode)
             .queue_family_indices(queue_family_indices)
             .pre_transform(caps.current_transform)
-            .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+            .composite_alpha(vk::CompositeAlphaFlagBitsKHR::OPAQUE_KHR)
             .present_mode(present_mode)
             .clipped(true)
             .old_swapchain(self.swapchain)
             .image_array_layers(1);
 
         let old_swapchain = self.swapchain;
-        self.swapchain = unsafe { ext_swapchain.create_swapchain(&sci, allocation_cbs()) }
+        self.swapchain = unsafe { handles.device.create_swapchain_khr(&sci, allocation_cbs()) }
             .expect("Failed to create swapchain");
         unsafe {
-            ext_swapchain.destroy_swapchain(old_swapchain, allocation_cbs());
+            handles
+                .device
+                .destroy_swapchain_khr(Some(old_swapchain), allocation_cbs());
         }
 
         self.outdated = false;
 
         self.swapimages = unsafe {
-            ext_swapchain
-                .get_swapchain_images(self.swapchain)
+            handles
+                .device
+                .get_swapchain_images_khr(self.swapchain, None)
                 .expect("Failed to get swapchain images")
         };
         let image_count = self.swapimages.len() as u32;
@@ -888,8 +900,8 @@ impl Swapchain {
         self.swapimageviews = {
             let mut iv = Vec::with_capacity(image_count as usize);
             for swi in self.swapimages.iter() {
-                let ivci = vk::ImageViewCreateInfo::builder()
-                    .view_type(vk::ImageViewType::TYPE_2D)
+                let ivci = vk::ImageViewCreateInfoBuilder::new()
+                    .view_type(vk::ImageViewType::_2D)
                     .format(handles.surface_format.format)
                     .components(identity_components())
                     .subresource_range(vk::ImageSubresourceRange {
@@ -910,8 +922,8 @@ impl Swapchain {
 
         self.depth_image = {
             let qfis = [handles.queues.get_primary_family()];
-            let ici = vk::ImageCreateInfo::builder()
-                .image_type(vk::ImageType::TYPE_2D)
+            let ici = vk::ImageCreateInfoBuilder::new()
+                .image_type(vk::ImageType::_2D)
                 .format(vk::Format::D32_SFLOAT_S8_UINT)
                 .extent(vk::Extent3D {
                     width: extent.width,
@@ -936,7 +948,7 @@ impl Swapchain {
                 handles,
                 &ici,
                 &aci,
-                vk::ImageViewType::TYPE_2D,
+                vk::ImageViewType::_2D,
                 vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL,
             )
         };
@@ -945,8 +957,8 @@ impl Swapchain {
 
         self.color_image = {
             let qfis = [handles.queues.get_primary_family()];
-            let ici = vk::ImageCreateInfo::builder()
-                .image_type(vk::ImageType::TYPE_2D)
+            let ici = vk::ImageCreateInfoBuilder::new()
+                .image_type(vk::ImageType::_2D)
                 .format(handles.surface_format.format)
                 .extent(vk::Extent3D {
                     width: extent.width,
@@ -974,7 +986,7 @@ impl Swapchain {
                 handles,
                 &ici,
                 &aci,
-                vk::ImageViewType::TYPE_2D,
+                vk::ImageViewType::_2D,
                 vk::ImageAspectFlags::COLOR,
             )
         };
@@ -987,7 +999,7 @@ impl Swapchain {
                 self.depth_image.image_view,
                 *img,
             ];
-            let fci = vk::FramebufferCreateInfo::builder()
+            let fci = vk::FramebufferCreateInfoBuilder::new()
                 .render_pass(handles.mainpass)
                 .attachments(&attachs)
                 .width(extent.width)
@@ -1000,7 +1012,7 @@ impl Swapchain {
         }
 
         for _ in 0..INFLIGHT_FRAMES {
-            let sci = vk::SemaphoreCreateInfo::builder().build();
+            let sci = vk::SemaphoreCreateInfoBuilder::new().build();
             let rfsem = unsafe { handles.device.create_semaphore(&sci, allocation_cbs()) }
                 .expect("Could not create Vulkan semaphore");
             let iasem = unsafe { handles.device.create_semaphore(&sci, allocation_cbs()) }
@@ -1008,7 +1020,7 @@ impl Swapchain {
             self.inflight_render_finished_semaphores.push(rfsem);
             self.inflight_image_available_semaphores.push(iasem);
 
-            let fci = vk::FenceCreateInfo::builder()
+            let fci = vk::FenceCreateInfoBuilder::new()
                 .flags(vk::FenceCreateFlags::SIGNALED)
                 .build();
             let iff = unsafe { handles.device.create_fence(&fci, allocation_cbs()) }
@@ -1033,13 +1045,13 @@ impl RenderingContext {
         let swapchain = Swapchain::new(&window, &handles, cfg);
 
         let pipeline_cache = {
-            let pci = vk::PipelineCacheCreateInfo::builder();
+            let pci = vk::PipelineCacheCreateInfoBuilder::new();
             unsafe { handles.device.create_pipeline_cache(&pci, allocation_cbs()) }
                 .expect("Couldn't create pipeline cache")
         };
 
         let cmd_pool = {
-            let cpci = vk::CommandPoolCreateInfo::builder()
+            let cpci = vk::CommandPoolCreateInfoBuilder::new()
                 .queue_family_index(handles.queues.get_primary_family())
                 .flags(
                     vk::CommandPoolCreateFlags::TRANSIENT
@@ -1050,7 +1062,7 @@ impl RenderingContext {
         };
 
         let inflight_cmds = {
-            let cbai = vk::CommandBufferAllocateInfo::builder()
+            let cbai = vk::CommandBufferAllocateInfoBuilder::new()
                 .command_buffer_count(INFLIGHT_FRAMES)
                 .command_pool(cmd_pool)
                 .level(vk::CommandBufferLevel::PRIMARY);
@@ -1071,27 +1083,27 @@ impl RenderingContext {
     }
 
     pub fn destroy(mut self) {
-        if self.handles.device.handle() == vk::Device::null() {
+        if self.handles.device.handle.is_null() {
             return;
         }
         unsafe {
             self.handles.device.device_wait_idle().unwrap();
         }
         self.handles.flush_destroy_queue();
-        if self.pipeline_cache != vk::PipelineCache::null() {
+        if !self.pipeline_cache.is_null() {
             unsafe {
                 self.handles
                     .device
-                    .destroy_pipeline_cache(self.pipeline_cache, allocation_cbs());
+                    .destroy_pipeline_cache(Some(self.pipeline_cache), allocation_cbs());
             }
             self.pipeline_cache = vk::PipelineCache::null();
         }
         self.inflight_cmds.clear();
-        if self.cmd_pool != vk::CommandPool::null() {
+        if !self.cmd_pool.is_null() {
             unsafe {
                 self.handles
                     .device
-                    .destroy_command_pool(self.cmd_pool, allocation_cbs());
+                    .destroy_command_pool(Some(self.cmd_pool), allocation_cbs());
             }
             self.cmd_pool = vk::CommandPool::null();
         }
@@ -1154,7 +1166,7 @@ impl RenderingContext {
                 vdo.destroy(&mut vmalloc, &self.handles);
             }
         }
-        vmalloc.set_current_frame_index(self.frame_index).unwrap();
+        vmalloc.set_current_frame_index(self.frame_index);
         drop(vmalloc);
         let mut dq = self.handles.destroy_queue.lock();
         std::mem::swap(
@@ -1176,33 +1188,35 @@ impl RenderingContext {
             return None;
         }
 
-        let image_index = match unsafe {
-            self.handles.ext_swapchain.acquire_next_image(
-                self.swapchain.swapchain,
-                u64::MAX,
-                self.swapchain.inflight_image_available_semaphores[inflight_index],
-                vk::Fence::null(),
-            )
-        } {
-            Ok((idx, false)) => idx,
-            Ok((idx, true)) => {
+        let image_index = {
+            let result = unsafe {
+                self.handles.device.acquire_next_image_khr(
+                    self.swapchain.swapchain,
+                    u64::MAX,
+                    Some(self.swapchain.inflight_image_available_semaphores[inflight_index]),
+                    None,
+                )
+            };
+            if result.raw == vk::Result::SUBOPTIMAL_KHR {
                 self.swapchain.outdated = true;
-                idx
             }
-            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+            if result.raw == vk::Result::ERROR_OUT_OF_DATE_KHR {
                 self.swapchain.outdated = true;
                 self.swapchain
                     .recreate_swapchain(&self.window, &self.handles, cfg);
                 return None;
+            } else if let Some(idx) = result.value {
+                idx
+            } else {
+                panic!("{:?}", result.raw)
             }
-            Err(err) => panic!("{:?}", err),
         };
 
         let cmd = {
             let buf = self.inflight_cmds[inflight_index];
-            unsafe { device.reset_command_buffer(buf, vk::CommandBufferResetFlags::empty()) }
+            unsafe { device.reset_command_buffer(buf, None) }
                 .expect("Couldn't reset frame cmd buffer");
-            let cbbi = vk::CommandBufferBeginInfo::builder()
+            let cbbi = vk::CommandBufferBeginInfoBuilder::new()
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
             unsafe { device.begin_command_buffer(buf, &cbbi) }
                 .expect("Couldn't start recording command buffer");
@@ -1254,7 +1268,7 @@ impl RenderingContext {
             },
         };
         let clears = [clear_color, clear_depth];
-        let rpbi = vk::RenderPassBeginInfo::builder()
+        let rpbi = vk::RenderPassBeginInfoBuilder::new()
             .render_pass(me.handles.mainpass)
             .framebuffer(me.swapchain.framebuffers[image_index])
             .render_area(area)
@@ -1324,12 +1338,11 @@ impl RenderingContext {
         let cmds = [cmd];
         let wss = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
 
-        let si = vk::SubmitInfo::builder()
+        let si = vk::SubmitInfoBuilder::new()
             .wait_semaphores(&imgavail)
             .signal_semaphores(&rendfinish)
             .command_buffers(&cmds)
-            .wait_dst_stage_mask(&wss)
-            .build();
+            .wait_dst_stage_mask(&wss);
 
         let queue = me.handles.queues.lock_primary_queue();
 
@@ -1338,26 +1351,25 @@ impl RenderingContext {
             me.handles.device.queue_submit(
                 *queue,
                 &[si],
-                me.swapchain.inflight_fences[inflight_index],
+                Some(me.swapchain.inflight_fences[inflight_index]),
             )
         }
         .expect("Couldn't submit frame command buffer");
 
         let swchs = [me.swapchain.swapchain];
         let imgids = [image_index as u32];
-        let pi = vk::PresentInfoKHR::builder()
+        let pi = vk::PresentInfoKHRBuilder::new()
             .wait_semaphores(&rendfinish)
             .swapchains(&swchs)
             .image_indices(&imgids);
         bxw_util::tracy_client::message("vk Queue Present", 4);
-        match unsafe { me.handles.ext_swapchain.queue_present(*queue, &pi) } {
-            Ok(false) => {}
-            Ok(true) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                me.swapchain.outdated = true;
-            }
-            Err(err) => {
-                panic!("{:?}", err);
-            }
+        let result = unsafe { me.handles.device.queue_present_khr(*queue, &pi) };
+        if result.raw == vk::Result::SUBOPTIMAL_KHR
+            || result.raw == vk::Result::ERROR_OUT_OF_DATE_KHR
+        {
+            me.swapchain.outdated = true;
+        } else if result.is_err() {
+            panic!("{:?}", result.raw);
         }
         bxw_util::tracy_client::message("Presented", 4);
     }

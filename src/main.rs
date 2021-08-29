@@ -5,6 +5,7 @@ pub mod config;
 pub mod network;
 pub mod server;
 pub mod util;
+pub mod vk;
 
 use bxw_util::debug_data::TrackingAllocator;
 use bxw_util::log;

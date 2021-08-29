@@ -2,15 +2,14 @@ use crate::client::render::vkhelpers::*;
 use crate::client::render::vulkan::{allocation_cbs, RenderingHandles};
 use crate::client::render::RenderingContext;
 use crate::config::Config;
-use ash::version::DeviceV1_0;
-use ash::vk;
+use crate::vk;
 use bxw_util::math::*;
 use bxw_util::*;
 use fnv::FnvHashMap;
 use image::RgbaImage;
 use regex::{Match, Regex};
 use std::path::{Path, PathBuf};
-use vk_mem as vma;
+use vk_mem_erupt as vma;
 
 pub struct RenderingResources {
     pub gui_atlas: OwnedImage,
@@ -62,7 +61,7 @@ impl RenderingResources {
         let font_atlas = load_owned_image("res/fonts/cascadia_0.png", rctx);
         font_atlas.give_name(&rctx.handles, || "font atlas");
         let voxel_texture_sampler = {
-            let sci = vk::SamplerCreateInfo::builder()
+            let sci = vk::SamplerCreateInfoBuilder::new()
                 .min_filter(vk::Filter::LINEAR)
                 .mag_filter(vk::Filter::LINEAR)
                 .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
@@ -79,7 +78,7 @@ impl RenderingResources {
                 .expect("Could not create voxel texture sampler")
         };
         let gui_sampler = {
-            let sci = vk::SamplerCreateInfo::builder()
+            let sci = vk::SamplerCreateInfoBuilder::new()
                 .min_filter(vk::Filter::NEAREST)
                 .mag_filter(vk::Filter::NEAREST)
                 .mipmap_mode(vk::SamplerMipmapMode::NEAREST)
@@ -96,7 +95,7 @@ impl RenderingResources {
                 .expect("Could not create voxel texture sampler")
         };
         let font_sampler = {
-            let sci = vk::SamplerCreateInfo::builder()
+            let sci = vk::SamplerCreateInfoBuilder::new()
                 .min_filter(vk::Filter::LINEAR)
                 .mag_filter(vk::Filter::LINEAR)
                 .mipmap_mode(vk::SamplerMipmapMode::NEAREST)
@@ -132,13 +131,13 @@ impl RenderingResources {
         unsafe {
             handles
                 .device
-                .destroy_sampler(self.voxel_texture_sampler, allocation_cbs());
+                .destroy_sampler(Some(self.voxel_texture_sampler), allocation_cbs());
             handles
                 .device
-                .destroy_sampler(self.font_sampler, allocation_cbs());
+                .destroy_sampler(Some(self.font_sampler), allocation_cbs());
             handles
                 .device
-                .destroy_sampler(self.gui_sampler, allocation_cbs());
+                .destroy_sampler(Some(self.gui_sampler), allocation_cbs());
         }
         self.voxel_texture_name_map.clear();
         let mut vmalloc = handles.vmalloc.lock();
@@ -204,13 +203,13 @@ impl RenderingResources {
             depth: 1,
         };
         let img = {
-            let ici = vk::ImageCreateInfo::builder()
-                .image_type(vk::ImageType::TYPE_2D)
+            let ici = vk::ImageCreateInfoBuilder::new()
+                .image_type(vk::ImageType::_2D)
                 .format(vk::Format::R8G8B8A8_SRGB)
                 .extent(img_extent)
                 .mip_levels(mip_lvls)
                 .array_layers(numimages)
-                .samples(vk::SampleCountFlags::TYPE_1)
+                .samples(vk::SampleCountFlagBits::_1)
                 .tiling(vk::ImageTiling::OPTIMAL)
                 .usage(
                     vk::ImageUsageFlags::SAMPLED
@@ -231,7 +230,7 @@ impl RenderingResources {
                 &rctx.handles,
                 &ici,
                 &aci,
-                vk::ImageViewType::TYPE_2D_ARRAY,
+                vk::ImageViewType::_2D_ARRAY,
                 vk::ImageAspectFlags::COLOR,
             )
         };
@@ -253,10 +252,10 @@ impl RenderingResources {
                     cmd.handle(),
                     vk::PipelineStageFlags::TOP_OF_PIPE,
                     vk::PipelineStageFlags::TRANSFER,
-                    vk::DependencyFlags::empty(),
+                    None,
                     &[],
                     &[],
-                    &[vk::ImageMemoryBarrier::builder()
+                    &[vk::ImageMemoryBarrierBuilder::new()
                         .src_access_mask(vk::AccessFlags::empty())
                         .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                         .old_layout(vk::ImageLayout::UNDEFINED)
@@ -264,8 +263,7 @@ impl RenderingResources {
                         .src_queue_family_index(qfis[0])
                         .dst_queue_family_index(qfis[0])
                         .image(img.image)
-                        .subresource_range(whole_img)
-                        .build()],
+                        .subresource_range(whole_img)],
                 );
             }
             let whole_mip0 = vk::ImageSubresourceLayers {
@@ -281,7 +279,8 @@ impl RenderingResources {
                 image_subresource: whole_mip0,
                 image_offset: Default::default(),
                 image_extent: img_extent,
-            }];
+            }
+            .into_builder()];
             unsafe {
                 rctx.handles.device.cmd_copy_buffer_to_image(
                     cmd.handle(),
@@ -296,10 +295,10 @@ impl RenderingResources {
                     cmd.handle(),
                     vk::PipelineStageFlags::TRANSFER,
                     vk::PipelineStageFlags::TRANSFER,
-                    vk::DependencyFlags::empty(),
+                    None,
                     &[],
                     &[],
-                    &[vk::ImageMemoryBarrier::builder()
+                    &[vk::ImageMemoryBarrierBuilder::new()
                         .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                         .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
                         .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
@@ -311,8 +310,7 @@ impl RenderingResources {
                             base_mip_level: 0,
                             level_count: 1,
                             ..whole_img
-                        })
-                        .build()],
+                        })],
                 );
             }
             for mip in 1..mip_lvls {
@@ -344,7 +342,8 @@ impl RenderingResources {
                             z: 1,
                         },
                     ],
-                }];
+                }
+                .into_builder()];
                 unsafe {
                     rctx.handles.device.cmd_blit_image(
                         cmd.handle(),
@@ -359,10 +358,10 @@ impl RenderingResources {
                         cmd.handle(),
                         vk::PipelineStageFlags::TRANSFER,
                         vk::PipelineStageFlags::TRANSFER,
-                        vk::DependencyFlags::empty(),
+                        None,
                         &[],
                         &[],
-                        &[vk::ImageMemoryBarrier::builder()
+                        &[vk::ImageMemoryBarrierBuilder::new()
                             .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                             .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
                             .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
@@ -374,8 +373,7 @@ impl RenderingResources {
                                 base_mip_level: mip,
                                 level_count: 1,
                                 ..whole_img
-                            })
-                            .build()],
+                            })],
                     );
                 }
             }
@@ -384,10 +382,10 @@ impl RenderingResources {
                     cmd.handle(),
                     vk::PipelineStageFlags::TRANSFER,
                     vk::PipelineStageFlags::FRAGMENT_SHADER,
-                    vk::DependencyFlags::empty(),
+                    None,
                     &[],
                     &[],
-                    &[vk::ImageMemoryBarrier::builder()
+                    &[vk::ImageMemoryBarrierBuilder::new()
                         .src_access_mask(vk::AccessFlags::TRANSFER_READ)
                         .dst_access_mask(vk::AccessFlags::SHADER_READ)
                         .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
@@ -395,8 +393,7 @@ impl RenderingResources {
                         .src_queue_family_index(qfis[0])
                         .dst_queue_family_index(qfis[0])
                         .image(img.image)
-                        .subresource_range(whole_img)
-                        .build()],
+                        .subresource_range(whole_img)],
                 );
             }
             cmd.execute(&queue);
@@ -440,13 +437,13 @@ fn rgba_to_owned_image(rgba: &RgbaImage, rctx: &RenderingContext) -> OwnedImage 
         depth: 1,
     };
     let img = {
-        let ici = vk::ImageCreateInfo::builder()
-            .image_type(vk::ImageType::TYPE_2D)
+        let ici = vk::ImageCreateInfoBuilder::new()
+            .image_type(vk::ImageType::_2D)
             .format(vk::Format::R8G8B8A8_SRGB)
             .extent(img_extent)
             .mip_levels(1)
             .array_layers(1)
-            .samples(vk::SampleCountFlags::TYPE_1)
+            .samples(vk::SampleCountFlagBits::_1)
             .tiling(vk::ImageTiling::OPTIMAL)
             .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST)
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
@@ -463,7 +460,7 @@ fn rgba_to_owned_image(rgba: &RgbaImage, rctx: &RenderingContext) -> OwnedImage 
             &rctx.handles,
             &ici,
             &aci,
-            vk::ImageViewType::TYPE_2D,
+            vk::ImageViewType::_2D,
             vk::ImageAspectFlags::COLOR,
         )
     };
@@ -484,10 +481,10 @@ fn rgba_to_owned_image(rgba: &RgbaImage, rctx: &RenderingContext) -> OwnedImage 
             cmd.handle(),
             vk::PipelineStageFlags::TOP_OF_PIPE,
             vk::PipelineStageFlags::TRANSFER,
-            vk::DependencyFlags::empty(),
+            None,
             &[],
             &[],
-            &[vk::ImageMemoryBarrier::builder()
+            &[vk::ImageMemoryBarrierBuilder::new()
                 .src_access_mask(vk::AccessFlags::empty())
                 .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                 .old_layout(vk::ImageLayout::UNDEFINED)
@@ -495,8 +492,7 @@ fn rgba_to_owned_image(rgba: &RgbaImage, rctx: &RenderingContext) -> OwnedImage 
                 .src_queue_family_index(qfis[0])
                 .dst_queue_family_index(qfis[0])
                 .image(img.image)
-                .subresource_range(whole_img)
-                .build()],
+                .subresource_range(whole_img)],
         );
     }
     let whole_mip0 = vk::ImageSubresourceLayers {
@@ -512,7 +508,8 @@ fn rgba_to_owned_image(rgba: &RgbaImage, rctx: &RenderingContext) -> OwnedImage 
         image_subresource: whole_mip0,
         image_offset: Default::default(),
         image_extent: img_extent,
-    }];
+    }
+    .into_builder()];
     unsafe {
         rctx.handles.device.cmd_copy_buffer_to_image(
             cmd.handle(),
@@ -527,10 +524,10 @@ fn rgba_to_owned_image(rgba: &RgbaImage, rctx: &RenderingContext) -> OwnedImage 
             cmd.handle(),
             vk::PipelineStageFlags::TRANSFER,
             vk::PipelineStageFlags::FRAGMENT_SHADER,
-            vk::DependencyFlags::empty(),
+            None,
             &[],
             &[],
-            &[vk::ImageMemoryBarrier::builder()
+            &[vk::ImageMemoryBarrierBuilder::new()
                 .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                 .dst_access_mask(vk::AccessFlags::SHADER_READ)
                 .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
@@ -538,8 +535,7 @@ fn rgba_to_owned_image(rgba: &RgbaImage, rctx: &RenderingContext) -> OwnedImage 
                 .src_queue_family_index(qfis[0])
                 .dst_queue_family_index(qfis[0])
                 .image(img.image)
-                .subresource_range(whole_img)
-                .build()],
+                .subresource_range(whole_img)],
         );
     }
     cmd.execute(&queue);

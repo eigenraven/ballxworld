@@ -2,8 +2,7 @@ use crate::client::render::vkhelpers::{cmd_push_struct_constants, make_pipe_dept
 use crate::client::render::vulkan::{allocation_cbs, RenderingHandles};
 use crate::client::render::{InPassFrameContext, RenderingContext};
 use crate::config::Config;
-use ash::version::DeviceV1_0;
-use ash::vk;
+use crate::vk;
 use bxw_util::math::*;
 use std::ffi::CString;
 
@@ -23,13 +22,12 @@ pub struct AtmosphereRenderer {
 impl AtmosphereRenderer {
     pub fn new(_cfg: &Config, rctx: &mut RenderingContext) -> Self {
         let pipeline_layout = {
-            let pc = [vk::PushConstantRange {
-                stage_flags: vk::ShaderStageFlags::VERTEX,
-                offset: 0,
-                size: 4 * 4 * 4,
-            }];
+            let pc = [vk::PushConstantRangeBuilder::new()
+                .stage_flags(vk::ShaderStageFlags::VERTEX)
+                .offset(0)
+                .size(4 * 4 * 4)];
             let dsls = [];
-            let lci = vk::PipelineLayoutCreateInfo::builder()
+            let lci = vk::PipelineLayoutCreateInfoBuilder::new()
                 .set_layouts(&dsls)
                 .push_constant_ranges(&pc);
             unsafe {
@@ -52,49 +50,48 @@ impl AtmosphereRenderer {
                 .expect("Couldn't load fragment atmosphere shader");
             //
             let cmain = CString::new("main").unwrap();
-            let vss = vk::PipelineShaderStageCreateInfo::builder()
-                .stage(vk::ShaderStageFlags::VERTEX)
+            let vss = vk::PipelineShaderStageCreateInfoBuilder::new()
+                .stage(vk::ShaderStageFlagBits::VERTEX)
                 .module(vs)
                 .name(&cmain);
-            let fss = vk::PipelineShaderStageCreateInfo::builder()
-                .stage(vk::ShaderStageFlags::FRAGMENT)
+            let fss = vk::PipelineShaderStageCreateInfoBuilder::new()
+                .stage(vk::ShaderStageFlagBits::FRAGMENT)
                 .module(fs)
                 .name(&cmain);
-            let shaders = [vss.build(), fss.build()];
-            let vtxinp = vk::PipelineVertexInputStateCreateInfo::builder();
-            let inpasm = vk::PipelineInputAssemblyStateCreateInfo::builder()
+            let shaders = [vss, fss];
+            let vtxinp = vk::PipelineVertexInputStateCreateInfoBuilder::new();
+            let inpasm = vk::PipelineInputAssemblyStateCreateInfoBuilder::new()
                 .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
                 .primitive_restart_enable(false);
-            let viewport = [rctx.swapchain.dynamic_state.get_viewport()];
-            let scissor = [rctx.swapchain.dynamic_state.get_scissor()];
-            let vwp_info = vk::PipelineViewportStateCreateInfo::builder()
+            let viewport = [rctx.swapchain.dynamic_state.get_viewport().into_builder()];
+            let scissor = [rctx.swapchain.dynamic_state.get_scissor().into_builder()];
+            let vwp_info = vk::PipelineViewportStateCreateInfoBuilder::new()
                 .scissors(&scissor)
                 .viewports(&viewport);
-            let raster = vk::PipelineRasterizationStateCreateInfo::builder()
+            let raster = vk::PipelineRasterizationStateCreateInfoBuilder::new()
                 .depth_clamp_enable(false)
                 .polygon_mode(vk::PolygonMode::FILL)
                 .line_width(1.0)
                 .cull_mode(vk::CullModeFlags::BACK)
                 .front_face(vk::FrontFace::CLOCKWISE)
                 .depth_bias_enable(false);
-            let multisampling = vk::PipelineMultisampleStateCreateInfo::builder()
+            let multisampling = vk::PipelineMultisampleStateCreateInfoBuilder::new()
                 .rasterization_samples(rctx.handles.sample_count)
                 .sample_shading_enable(true)
                 .min_sample_shading(0.2);
             let depthstencil = make_pipe_depthstencil();
-            let blendings = [vk::PipelineColorBlendAttachmentState::builder()
+            let blendings = [vk::PipelineColorBlendAttachmentStateBuilder::new()
                 .color_write_mask(vk::ColorComponentFlags::all())
-                .blend_enable(false)
-                .build()];
-            let blending = vk::PipelineColorBlendStateCreateInfo::builder()
+                .blend_enable(false)];
+            let blending = vk::PipelineColorBlendStateCreateInfoBuilder::new()
                 .logic_op_enable(false)
                 .attachments(&blendings)
                 .blend_constants([0.0, 0.0, 0.0, 0.0]);
             let dyn_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
             let dyn_state =
-                vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dyn_states);
+                vk::PipelineDynamicStateCreateInfoBuilder::new().dynamic_states(&dyn_states);
 
-            let pci = vk::GraphicsPipelineCreateInfo::builder()
+            let pcis = [vk::GraphicsPipelineCreateInfoBuilder::new()
                 .stages(&shaders)
                 .vertex_input_state(&vtxinp)
                 .input_assembly_state(&inpasm)
@@ -108,12 +105,11 @@ impl AtmosphereRenderer {
                 .render_pass(rctx.handles.mainpass)
                 .subpass(0)
                 .base_pipeline_handle(vk::Pipeline::null())
-                .base_pipeline_index(-1);
-            let pcis = [pci.build()];
+                .base_pipeline_index(-1)];
 
             let pipeline = unsafe {
                 rctx.handles.device.create_graphics_pipelines(
-                    rctx.pipeline_cache,
+                    Some(rctx.pipeline_cache),
                     &pcis,
                     allocation_cbs(),
                 )
@@ -123,10 +119,10 @@ impl AtmosphereRenderer {
             unsafe {
                 rctx.handles
                     .device
-                    .destroy_shader_module(vs, allocation_cbs());
+                    .destroy_shader_module(Some(vs), allocation_cbs());
                 rctx.handles
                     .device
-                    .destroy_shader_module(fs, allocation_cbs());
+                    .destroy_shader_module(Some(fs), allocation_cbs());
             }
             pipeline
         };
@@ -141,10 +137,10 @@ impl AtmosphereRenderer {
         unsafe {
             handles
                 .device
-                .destroy_pipeline(self.sky_pipeline, allocation_cbs());
+                .destroy_pipeline(Some(self.sky_pipeline), allocation_cbs());
             handles
                 .device
-                .destroy_pipeline_layout(self.sky_pipeline_layout, allocation_cbs());
+                .destroy_pipeline_layout(Some(self.sky_pipeline_layout), allocation_cbs());
         }
     }
 
