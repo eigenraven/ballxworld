@@ -365,8 +365,7 @@ impl RenderingHandles {
 
         let vmalloc = {
             let ai = vma::AllocatorCreateInfo {
-                flags: vma::AllocatorCreateFlags::EXTERNALLY_SYNCHRONIZED
-                    | vma::AllocatorCreateFlags::KHR_DEDICATED_ALLOCATION,
+                flags: vma::AllocatorCreateFlags::EXTERNALLY_SYNCHRONIZED,
                 instance: instance.clone(),
                 physical_device: physical,
                 device: device.clone(),
@@ -578,7 +577,7 @@ impl RenderingHandles {
         let enabled_layers: Vec<*const c_char> = raw_layers.iter().map(|s| s.as_ptr()).collect();
 
         let ai = vk::ApplicationInfoBuilder::new()
-            .api_version(vk::make_api_version(0, 1, 1, 0))
+            .api_version(vk::make_api_version(0, 1, 2, 0))
             .application_version(vk::make_api_version(0, 1, 0, 0))
             .engine_version(vk::make_api_version(0, 1, 0, 0))
             .application_name(&app_name)
