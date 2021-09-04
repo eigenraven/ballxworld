@@ -442,7 +442,7 @@ pub fn client_main() {
                     });
                     x += bsize + bgap;
                 }
-            } else {
+            } else if false {
                 let mut iscreen = UiPlayerInventory {};
                 iscreen.draw(gui, Some((&world, &client_world)));
             }

@@ -315,8 +315,8 @@ impl RenderingResources {
             }
             for mip in 1..mip_lvls {
                 let prev_mip = mip - 1;
-                let prev_sz = (idim.0 >> prev_mip, idim.1 >> prev_mip);
-                let now_sz = (idim.0 >> mip, idim.1 >> mip);
+                let prev_sz = ((idim.0 >> prev_mip).max(1), (idim.1 >> prev_mip).max(1));
+                let now_sz = ((idim.0 >> mip).max(1), (idim.1 >> mip).max(1));
                 let img_blit = [vk::ImageBlit {
                     src_subresource: vk::ImageSubresourceLayers {
                         mip_level: prev_mip,

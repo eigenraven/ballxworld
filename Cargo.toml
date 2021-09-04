@@ -38,6 +38,9 @@ default = ["use-rpmalloc"]
 use-rpmalloc = ["rpmalloc-sys/preload"]
 profile-with-tracy = ["use-rpmalloc", "bxw_util/profile-with-tracy", "bxw_world/profile-with-tracy", "bxw_terragen/profile-with-tracy"]
 
+[patch.crates-io]
+packed_simd_2 = { git = 'https://github.com/JohnTitor/packed_simd.git', rev = '45d5347a0d2187c046a546a477d2a53111cd7713' }
+
 [profile.dev]
 opt-level = 2
 debug-assertions = true
