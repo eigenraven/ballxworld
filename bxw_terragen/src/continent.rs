@@ -58,7 +58,7 @@ pub fn continent_tilepos_from_blockpos(
     bpos: BlockPosition,
 ) -> ContinentTilePosition {
     let sz = settings.continent_size as i32;
-    bpos.0.xz().map(|p| p.div_floor(&sz))
+    bpos.0.xz().map(|p| DivFloor::div_floor(p,&sz))
 }
 
 pub fn continent_tile_inner_pos(

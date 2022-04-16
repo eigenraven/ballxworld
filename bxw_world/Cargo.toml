@@ -9,6 +9,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+bytemuck = { version = "1.9", features = ["extern_crate_alloc", "extern_crate_std", "min_const_generics", "derive"] }
 noise = "0.7"
 rusqlite = { version = "0.25", features = ["bundled", "backup", "blob", "limits"] }
 bxw_util = { path = "../bxw_util" }

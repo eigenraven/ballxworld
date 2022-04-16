@@ -43,7 +43,7 @@ unsafe extern "system" fn vk_reallocate(
     }} else {
         unsafe {
             let new_ptr = std::alloc::alloc_zeroed(new_layout);
-            if new_ptr == std::ptr::null_mut() {
+            if new_ptr.is_null() {
                 panic!("Couldn't allocate memory for Vulkan");
             }
             std::ptr::copy_nonoverlapping(p_original as *mut u8, new_ptr, original_layout.size().min(size));

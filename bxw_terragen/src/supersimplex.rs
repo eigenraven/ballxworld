@@ -42,6 +42,10 @@ impl SuperSimplex {
         }
     }
 
+    pub fn seed(&self) -> u64 {
+        self.seed
+    }
+
     pub fn vnoise2_wide(&self, p: Vector2<WideF64>) -> WideF64 {
         self.noise2_wide(p.x, p.y)
     }

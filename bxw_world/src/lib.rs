@@ -16,6 +16,7 @@ pub mod worldmgr;
 use bxw_util::collider::AABB;
 pub use bxw_util::direction::{Direction, ALL_DIRS};
 use bxw_util::math::*;
+use bxw_util::bytemuck::{Pod, Zeroable};
 use bxw_util::*;
 use divrem::{DivFloor, RemFloor};
 use lru::LruCache;
@@ -30,7 +31,7 @@ pub const CHUNK_DIM2: usize = CHUNK_DIM * CHUNK_DIM;
 pub const CHUNK_DIM3: usize = CHUNK_DIM * CHUNK_DIM * CHUNK_DIM;
 
 /// Position of a chunk in the world, as a vector of coordinates in the units of chunks
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Zeroable, Pod)]
 #[repr(transparent)]
 pub struct ChunkPosition(pub Vector3<i32>);
 
@@ -47,7 +48,7 @@ impl ChunkPosition {
 impl From<BlockPosition> for ChunkPosition {
     fn from(bpos: BlockPosition) -> Self {
         let cd = CHUNK_DIM as i32;
-        Self::from_vec(bpos.0.map(|p| p.div_floor(&cd)))
+        Self::from_vec(bpos.0.map(|p| DivFloor::div_floor(p, &cd)))
     }
 }
 
@@ -80,7 +81,7 @@ impl std::fmt::Display for ChunkPosition {
 }
 
 /// Position of a block in the world, as a vector of coordinates in the units of blocks
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Zeroable, Pod)]
 #[repr(transparent)]
 pub struct BlockPosition(pub Vector3<i32>);
 
@@ -169,7 +170,7 @@ impl std::fmt::Display for BlockPosition {
 pub type VoxelId = u16;
 pub type VoxelMetadata = u16;
 
-#[derive(Debug, Copy, Clone, Default, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Default, Eq, PartialEq, Hash, Zeroable, Pod)]
 #[repr(transparent)]
 pub struct VoxelDatum {
     datum: u32,
@@ -218,26 +219,18 @@ pub enum VoxelStdShape {
     InnerCornerSlope,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Zeroable)]
 pub struct UncompressedChunk {
     pub blocks_yzx: [VoxelDatum; CHUNK_DIM3],
     pub position: ChunkPosition,
     pub dirty: u64,
 }
 
-impl Default for UncompressedChunk {
-    fn default() -> Self {
-        Self {
-            blocks_yzx: [Default::default(); CHUNK_DIM3],
-            position: ChunkPosition::default(),
-            dirty: 1,
-        }
-    }
-}
-
 impl UncompressedChunk {
-    pub fn new() -> Self {
-        Default::default()
+    pub fn new() -> Box<Self> {
+        let mut chunk: Box<Self> = bytemuck::zeroed_box();
+        chunk.dirty = 1;
+        chunk
     }
 }
 
@@ -312,7 +305,7 @@ fn decompress_rle(data: &[u32]) -> Result<Box<UncompressedChunk>, RleDecompressE
     if data.len() < 3 {
         return Err(RleDecompressError::FinalPosMismatch(data.len()));
     }
-    let mut target_box: Box<UncompressedChunk> = Box::default();
+    let mut target_box: Box<UncompressedChunk> = UncompressedChunk::new();
     let target = &mut target_box.blocks_yzx;
     let first_element = data[0];
     target[0] = VoxelDatum::from_repr(first_element);
