@@ -5,6 +5,7 @@ use bxw_util::flume;
 use bxw_util::log;
 use bxw_util::parking_lot::RwLock;
 use bxw_util::sodiumoxide::crypto::box_;
+use bxw_util::sodiumoxide::crypto::secretbox;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::io::ErrorKind;
@@ -14,6 +15,7 @@ use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::thread;
 use std::time;
+use bxw_util::smallvec::SmallVec;
 
 #[derive(Debug)]
 pub enum ServerCreationError {
@@ -42,6 +44,7 @@ pub struct ConnectedClient {
 pub struct NetServerSharedState {
     connection_raw_count: AtomicU32,
     server_id_keys: (box_::PublicKey, box_::SecretKey),
+    server_token_key: secretbox::Key,
     server_name: RwLock<String>,
 }
 
@@ -50,6 +53,7 @@ impl NetServerSharedState {
         Self {
             connection_raw_count: AtomicU32::new(0),
             server_id_keys,
+            server_token_key: secretbox::gen_key(),
             server_name: RwLock::new(server_name),
         }
     }
@@ -355,11 +359,14 @@ impl ServerNetmain {
     fn handle_packet(&mut self, socket_id: usize, byte_count: usize, from: SocketAddr) {
         let msg = &self.recv_buf[0..byte_count];
         let csrc = (socket_id, from);
+        let mut source: SmallVec<[u8; 32]> = SmallVec::new();
+        source.extend_from_slice(&socket_id.to_ne_bytes());
+        //TODO: ip source.extend_from_slice(from);
         let conntable_entry = self.connected_clients.entry(csrc);
         if let std::collections::hash_map::Entry::Occupied(conntable_entry) = conntable_entry {
             //
         } else {
-            let shs1 = match protocol::authflow_server_try_accept_handshake_packet(msg) {
+            let shs1 = match protocol::authflow_server_try_accept_handshake_packet(msg, &source, &self.shared_state.server_token_key, false) {
                 Ok(x) => x,
                 Err(_) => {
                     // TODO: Slow log

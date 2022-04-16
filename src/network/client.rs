@@ -2,7 +2,7 @@ use crate::config::ConfigHandle;
 use crate::network::packets;
 use crate::network::packets::auth::{ClientConnectionType, ConnectionResponse};
 use crate::network::protocol::{
-    authflow_client_handshake_packet, authflow_client_try_accept_handshake_ack, PacketStream,
+    authflow_client_connection_request_packet, authflow_client_try_accept_handshake_ack, PacketStream,
     PacketV1, NET_KEEPALIVE_INTERVAL,
 };
 use bxw_util::flume;
@@ -161,7 +161,7 @@ fn client_netmain(
         shared_data.server.address,
         socket.local_addr()
     );
-    let (hs0pkt, hs0state) = authflow_client_handshake_packet(
+    let (hs0pkt, hs0state) = authflow_client_connection_request_packet(
         &shared_data.config.id_keys.0,
         ClientConnectionType::GameClient,
     )

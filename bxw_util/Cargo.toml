@@ -13,32 +13,32 @@ rand = { version = "0.8", features = ["nightly", "simd_support"] }
 rand_distr = "0.4"
 rand_xoshiro = "0.6"
 rstar = "0.9"
-nalgebra = "0.29"
-glm = { version = "0.15", package = "nalgebra-glm" }
-packed_simd = { version = "0.3.5", package = "packed_simd_2" }
-simba = { version = "0.6", features = ["packed_simd"] }
-toml_edit = "0.2"
+nalgebra = "0.30"
+glm = { version = "0.16", package = "nalgebra-glm" }
+packed_simd = { version = "0.3.6", package = "packed_simd_2" }
+simba = { version = "0.7", features = ["packed_simd"] }
+toml_edit = "0.14"
 thread_local_crate = { version = "1.0", package = "thread_local" }
 smallvec = "1"
 rayon = "1.5"
 scopeguard = "1.1"
-parking_lot = { version = "0.11", features = ["nightly"] }
+parking_lot = { version = "0.12", features = ["nightly"] }
 divrem = "1"
 num-traits = "0.2"
 fnv = "1.0"
 itertools = "0.10"
 regex = "1.5"
 log = "0.4"
-lru = "0.6"
+lru = "0.7"
 lazy_static = "1.4"
 num_cpus = "1.13"
 blake3 = "1"
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
 toml = "0.5"
 rmp = "0.8"
-rmp-serde = "0.15"
+rmp-serde = "1.0"
 sodiumoxide = "0.2.7"
-zstd = "0.9"
+zstd = "0.11.1"
 
 tracy-client = { version = "0.12.0", default-features = false, features = ["delayed-init"] }
 

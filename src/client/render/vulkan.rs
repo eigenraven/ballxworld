@@ -7,7 +7,7 @@ use crate::vk;
 use bxw_util::debug_data::DEBUG_DATA;
 use bxw_util::*;
 use erupt::vk::EXT_DEBUG_UTILS_EXTENSION_NAME;
-use erupt::{DeviceLoader, EntryLoader, InstanceLoader};
+use erupt::{DeviceLoader, DeviceLoaderBuilder, EntryLoader, InstanceLoader, InstanceLoaderBuilder};
 use num_traits::clamp;
 use parking_lot::{Mutex, MutexGuard};
 use sdl2::video::Window;
@@ -19,9 +19,83 @@ use std::os::raw::c_char;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Weak};
 use vk_mem_erupt as vma;
+use bxw_util::fnv::FnvHashMap;
+use bxw_util::parking_lot::lock_api::MappedMutexGuard;
+use bxw_util::parking_lot::RawMutex;
+
+static VULK_ALLOCATIONS: Mutex<Option<fnv::FnvHashMap<usize, std::alloc::Layout>>> = Mutex::new(None);
+
+fn vulk_allocations() -> MappedMutexGuard<'static, RawMutex, FnvHashMap<usize, std::alloc::Layout>> {
+    MutexGuard::map(VULK_ALLOCATIONS.lock(), |v| v.get_or_insert_with(Default::default))
+}
+
+unsafe extern "system" fn vk_reallocate(
+    p_user_data: *mut std::ffi::c_void,
+    p_original: *mut std::ffi::c_void,
+    size: usize,
+    alignment: usize,
+    allocation_scope: vk::SystemAllocationScope,
+) -> *mut std::ffi::c_void {
+    let original_layout = vulk_allocations().remove(&(p_original as usize)).expect("Vulkan trying to free memory without matching allocation");
+    let new_layout = std::alloc::Layout::from_size_align(size, alignment).unwrap();
+    let new_ptr = if alignment == original_layout.align() { unsafe {
+        std::alloc::realloc(p_original as *mut u8, original_layout, size) as *mut c_void
+    }} else {
+        unsafe {
+            let new_ptr = std::alloc::alloc_zeroed(new_layout);
+            if new_ptr == std::ptr::null_mut() {
+                panic!("Couldn't allocate memory for Vulkan");
+            }
+            std::ptr::copy_nonoverlapping(p_original as *mut u8, new_ptr, original_layout.size().min(size));
+            std::alloc::dealloc(p_original as *mut u8, original_layout);
+            new_ptr as *mut c_void
+        }
+    };
+    vulk_allocations().insert(new_ptr as usize, new_layout);
+    new_ptr
+}
+
+unsafe extern "system" fn vk_allocate(
+    p_user_data: *mut std::ffi::c_void,
+    size: usize,
+    alignment: usize,
+    allocation_scope: vk::SystemAllocationScope,
+) -> *mut std::ffi::c_void {
+    let layout = std::alloc::Layout::from_size_align(size, alignment).unwrap();
+    let ptr = unsafe {
+        std::alloc::alloc_zeroed(layout) as *mut c_void
+    };
+    vulk_allocations().insert(ptr as usize, layout);
+    ptr
+}
+
+unsafe extern "system" fn vk_free(
+    p_user_data: *mut std::ffi::c_void,
+    p_memory: *mut std::ffi::c_void,
+) {
+    let layout = vulk_allocations().remove(&(p_memory as usize)).expect("Vulkan trying to free memory without matching allocation");
+    unsafe {
+        std::alloc::dealloc(p_memory as *mut u8, layout);
+    }
+}
+
+struct AllocationCallbacksHolder(vk::AllocationCallbacks);
+// Safety: these are statically initialized, non-changing function pointers
+unsafe impl Send for AllocationCallbacksHolder {}
+// Safety: these are statically initialized, non-changing function pointers
+unsafe impl Sync for AllocationCallbacksHolder {}
+
+static ALLOCATION_CBS: AllocationCallbacksHolder = AllocationCallbacksHolder(vk::AllocationCallbacks {
+    p_user_data: std::ptr::null_mut(),
+    pfn_allocation: Some(vk_allocate),
+    pfn_reallocation: Some(vk_reallocate),
+    pfn_free: Some(vk_free),
+    pfn_internal_allocation: None,
+    pfn_internal_free: None
+});
 
 pub fn allocation_cbs() -> Option<&'static vk::AllocationCallbacks> {
-    None
+    Some(&ALLOCATION_CBS.0)
 }
 
 pub type QueueGuard<'a> = MutexGuard<'a, vk::Queue>;
@@ -102,7 +176,7 @@ pub struct RenderingHandles {
 pub struct Swapchain {
     pub swapchain: vk::SwapchainKHR,
     pub swapimage_size: vk::Extent2D,
-    pub swapimages: Vec<vk::Image>,
+    pub swapimages: vk::SmallVec<vk::Image>,
     pub swapimageviews: Vec<vk::ImageView>,
     pub depth_image: OwnedImage,
     pub color_image: OwnedImage,
@@ -123,7 +197,7 @@ pub struct RenderingContext {
     frame_index: u32,
     // default render set
     pub cmd_pool: vk::CommandPool,
-    pub inflight_cmds: Vec<vk::CommandBuffer>,
+    pub inflight_cmds: vk::SmallVec<vk::CommandBuffer>,
     pub pipeline_cache: vk::PipelineCache,
 }
 
@@ -341,7 +415,7 @@ impl RenderingHandles {
                 .queue_create_infos(&queue_families);
 
             Arc::new(
-                unsafe { DeviceLoader::new(&instance, physical, &dci, allocation_cbs()) }
+                unsafe { DeviceLoaderBuilder::new().allocation_callbacks(allocation_cbs().unwrap()).build(&instance, physical, &dci) }
                     .expect("Couldn't create Vulkan device"),
             )
         };
@@ -479,7 +553,7 @@ impl RenderingHandles {
                 .attachments(&ats)
                 .subpasses(&subpasses)
                 .dependencies(&deps);
-            unsafe { device.create_render_pass(&rpci.build(), allocation_cbs()) }
+            unsafe { device.create_render_pass(&rpci, allocation_cbs()) }
                 .expect("Could not create Vulkan renderpass")
         };
 
@@ -587,7 +661,7 @@ impl RenderingHandles {
             .enabled_layer_names(&enabled_layers)
             .enabled_extension_names(&enabled_exts);
         let instance = Arc::new(
-            unsafe { InstanceLoader::new(entry, &ici, allocation_cbs()) }
+            unsafe { InstanceLoaderBuilder::new().allocation_callbacks(allocation_cbs().unwrap()).build(entry, &ici) }
                 .expect("Couldn't create Vulkan instance"),
         );
 
@@ -625,7 +699,7 @@ impl RenderingHandles {
         let smci = vk::ShaderModuleCreateInfo {
             p_code: spv.as_ptr() as *const u32,
             code_size: spv.len(),
-            ..vk::ShaderModuleCreateInfoBuilder::new().build()
+            ..Default::default()
         };
         let sm = unsafe { self.device.create_shader_module(&smci, allocation_cbs()) }
             .result()
@@ -675,7 +749,7 @@ impl RenderingHandles {
         } = self;
         if mainpass != vk::RenderPass::null() {
             unsafe {
-                device.destroy_render_pass(Some(mainpass), allocation_cbs());
+                device.destroy_render_pass((mainpass), allocation_cbs());
             }
         }
         let mut vmalloc = Arc::try_unwrap(vmalloc)
@@ -684,13 +758,13 @@ impl RenderingHandles {
 
         vmalloc.destroy();
         unsafe {
-            instance.destroy_surface_khr(Some(surface), allocation_cbs());
+            instance.destroy_surface_khr((surface), allocation_cbs());
         }
         let oneoff_cmd_pool = Arc::try_unwrap(oneoff_cmd_pool)
             .unwrap_or_else(|_| panic!("Multiple references to oneoff_cmd_pool"))
             .into_inner();
         unsafe {
-            device.destroy_command_pool(Some(oneoff_cmd_pool), allocation_cbs());
+            device.destroy_command_pool((oneoff_cmd_pool), allocation_cbs());
         }
         unsafe {
             device.destroy_device(allocation_cbs());
@@ -698,7 +772,7 @@ impl RenderingHandles {
         if let Some(ext_debug) = ext_debug {
             unsafe {
                 instance.destroy_debug_utils_messenger_ext(
-                    Some(ext_debug.debug_messenger),
+                    (ext_debug.debug_messenger),
                     allocation_cbs(),
                 );
             }
@@ -714,7 +788,7 @@ impl Swapchain {
         let mut sch = Self {
             swapchain: vk::SwapchainKHR::null(),
             swapimage_size: Default::default(),
-            swapimages: Vec::new(),
+            swapimages: Default::default(),
             swapimageviews: Vec::new(),
             depth_image: OwnedImage::new(),
             color_image: OwnedImage::new(),
@@ -736,7 +810,7 @@ impl Swapchain {
         for fence in self.inflight_fences.drain(..) {
             if fence != vk::Fence::null() {
                 unsafe {
-                    handles.device.destroy_fence(Some(fence), allocation_cbs());
+                    handles.device.destroy_fence((fence), allocation_cbs());
                 }
             }
         }
@@ -749,7 +823,7 @@ impl Swapchain {
                 unsafe {
                     handles
                         .device
-                        .destroy_semaphore(Some(semaphore), allocation_cbs());
+                        .destroy_semaphore((semaphore), allocation_cbs());
                 }
             }
         }
@@ -758,7 +832,7 @@ impl Swapchain {
                 unsafe {
                     handles
                         .device
-                        .destroy_framebuffer(Some(fb), allocation_cbs());
+                        .destroy_framebuffer((fb), allocation_cbs());
                 }
             }
         }
@@ -767,7 +841,7 @@ impl Swapchain {
                 unsafe {
                     handles
                         .device
-                        .destroy_image_view(Some(iv), allocation_cbs());
+                        .destroy_image_view((iv), allocation_cbs());
                 }
             }
         }
@@ -784,7 +858,7 @@ impl Swapchain {
             unsafe {
                 handles
                     .device
-                    .destroy_swapchain_khr(Some(self.swapchain), allocation_cbs());
+                    .destroy_swapchain_khr((self.swapchain), allocation_cbs());
             }
             self.swapchain = vk::SwapchainKHR::null();
         }
@@ -883,7 +957,7 @@ impl Swapchain {
         unsafe {
             handles
                 .device
-                .destroy_swapchain_khr(Some(old_swapchain), allocation_cbs());
+                .destroy_swapchain_khr((old_swapchain), allocation_cbs());
         }
 
         self.outdated = false;
@@ -1011,7 +1085,7 @@ impl Swapchain {
         }
 
         for _ in 0..INFLIGHT_FRAMES {
-            let sci = vk::SemaphoreCreateInfoBuilder::new().build();
+            let sci = vk::SemaphoreCreateInfoBuilder::new().build_dangling();
             let rfsem = unsafe { handles.device.create_semaphore(&sci, allocation_cbs()) }
                 .expect("Could not create Vulkan semaphore");
             let iasem = unsafe { handles.device.create_semaphore(&sci, allocation_cbs()) }
@@ -1020,8 +1094,7 @@ impl Swapchain {
             self.inflight_image_available_semaphores.push(iasem);
 
             let fci = vk::FenceCreateInfoBuilder::new()
-                .flags(vk::FenceCreateFlags::SIGNALED)
-                .build();
+                .flags(vk::FenceCreateFlags::SIGNALED);
             let iff = unsafe { handles.device.create_fence(&fci, allocation_cbs()) }
                 .expect("Could not create Vulkan fence");
             self.inflight_fences.push(iff);
@@ -1093,7 +1166,7 @@ impl RenderingContext {
             unsafe {
                 self.handles
                     .device
-                    .destroy_pipeline_cache(Some(self.pipeline_cache), allocation_cbs());
+                    .destroy_pipeline_cache((self.pipeline_cache), allocation_cbs());
             }
             self.pipeline_cache = vk::PipelineCache::null();
         }
@@ -1102,7 +1175,7 @@ impl RenderingContext {
             unsafe {
                 self.handles
                     .device
-                    .destroy_command_pool(Some(self.cmd_pool), allocation_cbs());
+                    .destroy_command_pool((self.cmd_pool), allocation_cbs());
             }
             self.cmd_pool = vk::CommandPool::null();
         }
@@ -1192,8 +1265,8 @@ impl RenderingContext {
                 self.handles.device.acquire_next_image_khr(
                     self.swapchain.swapchain,
                     u64::MAX,
-                    Some(self.swapchain.inflight_image_available_semaphores[inflight_index]),
-                    None,
+                    (self.swapchain.inflight_image_available_semaphores[inflight_index]),
+                    vk::Fence::null(),
                 )
             };
             if result.raw == vk::Result::SUBOPTIMAL_KHR {
@@ -1213,7 +1286,7 @@ impl RenderingContext {
 
         let cmd = {
             let buf = self.inflight_cmds[inflight_index];
-            unsafe { device.reset_command_buffer(buf, None) }
+            unsafe { device.reset_command_buffer(buf, vk::CommandBufferResetFlags::empty()) }
                 .expect("Couldn't reset frame cmd buffer");
             let cbbi = vk::CommandBufferBeginInfoBuilder::new()
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
@@ -1350,7 +1423,7 @@ impl RenderingContext {
             me.handles.device.queue_submit(
                 *queue,
                 &[si],
-                Some(me.swapchain.inflight_fences[inflight_index]),
+                (me.swapchain.inflight_fences[inflight_index]),
             )
         }
         .expect("Couldn't submit frame command buffer");

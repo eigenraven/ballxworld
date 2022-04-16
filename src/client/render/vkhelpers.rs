@@ -112,7 +112,7 @@ impl VulkanDeviceObject for OwnedImage {
             unsafe {
                 handles
                     .device
-                    .destroy_image_view(Some(self.image_view), allocation_cbs());
+                    .destroy_image_view((self.image_view), allocation_cbs());
             }
             vmalloc.destroy_image(self.image, &self.allocation.take().unwrap().0);
         }
@@ -283,7 +283,7 @@ impl<'h> Drop for FenceGuard<'h> {
             unsafe {
                 self.handles
                     .device
-                    .destroy_fence(Some(self.fence), allocation_cbs());
+                    .destroy_fence((self.fence), allocation_cbs());
             }
             self.fence = vk::Fence::null();
         }
@@ -340,7 +340,7 @@ impl<'h> OnetimeCmdGuard<'h> {
         unsafe {
             handles
                 .device
-                .queue_submit(**queue, &sis, Some(self.fence.fence))
+                .queue_submit(**queue, &sis, (self.fence.fence))
         }
         .expect("Couldn't submit one-time cmd buffer");
         self.fence
@@ -403,7 +403,7 @@ pub fn make_pipe_depthstencil() -> vk::PipelineDepthStencilStateCreateInfo {
         .stencil_test_enable(false)
         .min_depth_bounds(0.0)
         .max_depth_bounds(1.0)
-        .build()
+        .build_dangling()
 }
 
 pub fn identity_components() -> vk::ComponentMapping {
@@ -458,7 +458,7 @@ impl Drop for DroppingCommandPool {
         if self.pool != vk::CommandPool::null() {
             unsafe {
                 self.device
-                    .destroy_command_pool(Some(self.pool), allocation_cbs());
+                    .destroy_command_pool((self.pool), allocation_cbs());
             }
             self.pool = vk::CommandPool::null();
         }

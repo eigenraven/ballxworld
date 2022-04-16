@@ -131,13 +131,13 @@ impl RenderingResources {
         unsafe {
             handles
                 .device
-                .destroy_sampler(Some(self.voxel_texture_sampler), allocation_cbs());
+                .destroy_sampler((self.voxel_texture_sampler), allocation_cbs());
             handles
                 .device
-                .destroy_sampler(Some(self.font_sampler), allocation_cbs());
+                .destroy_sampler((self.font_sampler), allocation_cbs());
             handles
                 .device
-                .destroy_sampler(Some(self.gui_sampler), allocation_cbs());
+                .destroy_sampler((self.gui_sampler), allocation_cbs());
         }
         self.voxel_texture_name_map.clear();
         let mut vmalloc = handles.vmalloc.lock();
@@ -252,7 +252,7 @@ impl RenderingResources {
                     cmd.handle(),
                     vk::PipelineStageFlags::TOP_OF_PIPE,
                     vk::PipelineStageFlags::TRANSFER,
-                    None,
+                    vk::DependencyFlags::empty(),
                     &[],
                     &[],
                     &[vk::ImageMemoryBarrierBuilder::new()
@@ -295,7 +295,7 @@ impl RenderingResources {
                     cmd.handle(),
                     vk::PipelineStageFlags::TRANSFER,
                     vk::PipelineStageFlags::TRANSFER,
-                    None,
+                    vk::DependencyFlags::empty(),
                     &[],
                     &[],
                     &[vk::ImageMemoryBarrierBuilder::new()
@@ -358,7 +358,7 @@ impl RenderingResources {
                         cmd.handle(),
                         vk::PipelineStageFlags::TRANSFER,
                         vk::PipelineStageFlags::TRANSFER,
-                        None,
+                        vk::DependencyFlags::empty(),
                         &[],
                         &[],
                         &[vk::ImageMemoryBarrierBuilder::new()
@@ -382,7 +382,7 @@ impl RenderingResources {
                     cmd.handle(),
                     vk::PipelineStageFlags::TRANSFER,
                     vk::PipelineStageFlags::FRAGMENT_SHADER,
-                    None,
+                    vk::DependencyFlags::empty(),
                     &[],
                     &[],
                     &[vk::ImageMemoryBarrierBuilder::new()
@@ -481,7 +481,7 @@ fn rgba_to_owned_image(rgba: &RgbaImage, rctx: &RenderingContext) -> OwnedImage 
             cmd.handle(),
             vk::PipelineStageFlags::TOP_OF_PIPE,
             vk::PipelineStageFlags::TRANSFER,
-            None,
+            vk::DependencyFlags::empty(),
             &[],
             &[],
             &[vk::ImageMemoryBarrierBuilder::new()
@@ -524,7 +524,7 @@ fn rgba_to_owned_image(rgba: &RgbaImage, rctx: &RenderingContext) -> OwnedImage 
             cmd.handle(),
             vk::PipelineStageFlags::TRANSFER,
             vk::PipelineStageFlags::FRAGMENT_SHADER,
-            None,
+            vk::DependencyFlags::empty(),
             &[],
             &[],
             &[vk::ImageMemoryBarrierBuilder::new()

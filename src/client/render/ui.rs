@@ -776,7 +776,7 @@ impl GuiRenderer {
 
             let pipeline = unsafe {
                 rctx.handles.device.create_graphics_pipelines(
-                    Some(rctx.pipeline_cache),
+                    (rctx.pipeline_cache),
                     &pcis,
                     allocation_cbs(),
                 )
@@ -786,10 +786,10 @@ impl GuiRenderer {
             unsafe {
                 rctx.handles
                     .device
-                    .destroy_shader_module(Some(vs), allocation_cbs());
+                    .destroy_shader_module((vs), allocation_cbs());
                 rctx.handles
                     .device
-                    .destroy_shader_module(Some(fs), allocation_cbs());
+                    .destroy_shader_module((fs), allocation_cbs());
             }
             pipeline
         };
@@ -828,7 +828,7 @@ impl GuiRenderer {
             .size((num_squares * 4 * std::mem::size_of::<shaders::UiVertex>()) as u64)
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
             .queue_family_indices(&qfs)
-            .build();
+            .build_dangling();
         let ibi = vk::BufferCreateInfo {
             usage: vk::BufferUsageFlags::INDEX_BUFFER,
             size: (num_squares * 5 * std::mem::size_of::<u32>()) as u64,
@@ -853,16 +853,16 @@ impl GuiRenderer {
             self.egui_integ.destroy(handles);
             handles
                 .device
-                .destroy_pipeline(Some(self.pipeline), allocation_cbs());
+                .destroy_pipeline((self.pipeline), allocation_cbs());
             handles
                 .device
-                .destroy_pipeline_layout(Some(self.pipeline_layout), allocation_cbs());
+                .destroy_pipeline_layout((self.pipeline_layout), allocation_cbs());
             handles
                 .device
-                .destroy_descriptor_pool(Some(self.ds_pool), allocation_cbs());
+                .destroy_descriptor_pool((self.ds_pool), allocation_cbs());
             handles
                 .device
-                .destroy_descriptor_set_layout(Some(self.texture_ds_layout), allocation_cbs());
+                .destroy_descriptor_set_layout((self.texture_ds_layout), allocation_cbs());
             let mut vmalloc = handles.vmalloc.lock_traced("vmalloc", file!(), line!());
             for (mut b1, mut b2) in self.gui_buffers.drain(..) {
                 b1.destroy(&mut vmalloc, handles);

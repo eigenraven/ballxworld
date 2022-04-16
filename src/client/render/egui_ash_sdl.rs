@@ -92,7 +92,7 @@ pub struct EguiIntegration {
     font_image_view: vk::ImageView,
     font_image_size: (u64, u64),
     font_image_version: u64,
-    font_descriptor_sets: Vec<vk::DescriptorSet>,
+    font_descriptor_sets: vk::SmallVec<vk::DescriptorSet>,
 
     user_texture_layout: vk::DescriptorSetLayout,
     user_textures: Vec<Option<vk::DescriptorSet>>,
@@ -293,15 +293,15 @@ impl EguiIntegration {
 
             let pipeline = unsafe {
                 device.create_graphics_pipelines(
-                    Some(rctx.pipeline_cache),
+                    rctx.pipeline_cache,
                     &pipeline_create_info,
                     allocation_cbs(),
                 )
             }
             .expect("Failed to create egui graphics pipeline.")[0];
             unsafe {
-                device.destroy_shader_module(Some(vertex_shader_module), allocation_cbs());
-                device.destroy_shader_module(Some(fragment_shader_module), allocation_cbs());
+                device.destroy_shader_module((vertex_shader_module), allocation_cbs());
+                device.destroy_shader_module((fragment_shader_module), allocation_cbs());
             }
             pipeline
         };
@@ -985,7 +985,7 @@ impl EguiIntegration {
 
         // free font image
         unsafe {
-            device.destroy_image_view(Some(self.font_image_view), None);
+            device.destroy_image_view((self.font_image_view), None);
         }
         vmalloc.destroy_image(self.font_image, &self.font_image_allocation);
 
@@ -1086,7 +1086,7 @@ impl EguiIntegration {
                 command_buffer,
                 vk::PipelineStageFlags::HOST,
                 vk::PipelineStageFlags::TRANSFER,
-                None,
+                vk::DependencyFlags::empty(),
                 &[],
                 &[],
                 &[vk::ImageMemoryBarrierBuilder::new()
@@ -1135,7 +1135,7 @@ impl EguiIntegration {
                 command_buffer,
                 vk::PipelineStageFlags::TRANSFER,
                 vk::PipelineStageFlags::ALL_GRAPHICS,
-                None,
+                vk::DependencyFlags::empty(),
                 &[],
                 &[],
                 &[vk::ImageMemoryBarrierBuilder::new()
@@ -1251,8 +1251,8 @@ impl EguiIntegration {
     /// This method release vk objects memory that is not managed by Rust.
     pub unsafe fn destroy(&mut self, handles: &RenderingHandles) {
         let device = &handles.device;
-        device.destroy_descriptor_set_layout(Some(self.user_texture_layout), None);
-        device.destroy_image_view(Some(self.font_image_view), None);
+        device.destroy_descriptor_set_layout((self.user_texture_layout), None);
+        device.destroy_image_view((self.font_image_view), None);
         let vmalloc = handles.vmalloc.lock();
         vmalloc.destroy_image(self.font_image, &self.font_image_allocation);
         vmalloc.destroy_buffer(
@@ -1266,12 +1266,12 @@ impl EguiIntegration {
             vmalloc.destroy_buffer(self.vertex_buffers[i], &self.vertex_buffer_allocations[i]);
         }
         drop(vmalloc);
-        device.destroy_sampler(Some(self.sampler), None);
-        device.destroy_pipeline(Some(self.pipeline), None);
-        device.destroy_pipeline_layout(Some(self.pipeline_layout), None);
+        device.destroy_sampler((self.sampler), None);
+        device.destroy_pipeline((self.pipeline), None);
+        device.destroy_pipeline_layout((self.pipeline_layout), None);
         for &descriptor_set_layout in self.descriptor_set_layouts.iter() {
-            device.destroy_descriptor_set_layout(Some(descriptor_set_layout), None);
+            device.destroy_descriptor_set_layout((descriptor_set_layout), None);
         }
-        device.destroy_descriptor_pool(Some(self.descriptor_pool), None);
+        device.destroy_descriptor_pool((self.descriptor_pool), None);
     }
 }

@@ -6,3 +6,4 @@ pub use erupt::extensions::khr_swapchain::*;
 pub use erupt::vk1_0::*;
 pub use erupt::vk1_1::*;
 pub use erupt::vk1_2::*;
+pub use erupt::SmallVec;

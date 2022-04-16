@@ -170,7 +170,7 @@ pub struct VoxelRenderer {
     texture_ds: vk::DescriptorSet,
     texture_ds_layout: vk::DescriptorSetLayout,
     uniform_ds_layout: vk::DescriptorSetLayout,
-    uniform_dss: Vec<vk::DescriptorSet>,
+    uniform_dss: vk::SmallVec<vk::DescriptorSet>,
     ds_pool: vk::DescriptorPool,
     pub voxel_pipeline_layout: vk::PipelineLayout,
     pub voxel_pipeline: vk::Pipeline,
@@ -311,7 +311,7 @@ impl ChunkDataHandler for MeshDataHandler {
                             .size(tot_sz as u64)
                             .sharing_mode(vk::SharingMode::EXCLUSIVE)
                             .queue_family_indices(&qfs)
-                            .build();
+                            .build_dangling();
                         let ai = vma::AllocationCreateInfo {
                             usage: vma::MemoryUsage::CpuOnly,
                             flags: vma::AllocationCreateFlags::MAPPED
@@ -748,7 +748,7 @@ impl VoxelRenderer {
 
             let pipeline = unsafe {
                 rctx.handles.device.create_graphics_pipelines(
-                    Some(rctx.pipeline_cache),
+                    (rctx.pipeline_cache),
                     &pcis,
                     allocation_cbs(),
                 )
@@ -758,10 +758,10 @@ impl VoxelRenderer {
             unsafe {
                 rctx.handles
                     .device
-                    .destroy_shader_module(Some(vs), allocation_cbs());
+                    .destroy_shader_module((vs), allocation_cbs());
                 rctx.handles
                     .device
-                    .destroy_shader_module(Some(fs), allocation_cbs());
+                    .destroy_shader_module((fs), allocation_cbs());
             }
             pipeline
         };
@@ -792,20 +792,20 @@ impl VoxelRenderer {
         unsafe {
             handles
                 .device
-                .destroy_pipeline(Some(self.voxel_pipeline), allocation_cbs());
+                .destroy_pipeline((self.voxel_pipeline), allocation_cbs());
             handles
                 .device
-                .destroy_pipeline_layout(Some(self.voxel_pipeline_layout), allocation_cbs());
+                .destroy_pipeline_layout((self.voxel_pipeline_layout), allocation_cbs());
             self.uniform_dss.clear();
             handles
                 .device
-                .destroy_descriptor_pool(Some(self.ds_pool), allocation_cbs());
+                .destroy_descriptor_pool((self.ds_pool), allocation_cbs());
             handles
                 .device
-                .destroy_descriptor_set_layout(Some(self.texture_ds_layout), allocation_cbs());
+                .destroy_descriptor_set_layout((self.texture_ds_layout), allocation_cbs());
             handles
                 .device
-                .destroy_descriptor_set_layout(Some(self.uniform_ds_layout), allocation_cbs());
+                .destroy_descriptor_set_layout((self.uniform_ds_layout), allocation_cbs());
             let mut vmalloc = handles.vmalloc.lock_traced("vmalloc", file!(), line!());
             self.ubuffer.destroy(&mut vmalloc, handles);
             let vpool = Arc::try_unwrap(self.chunk_pool)

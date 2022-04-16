@@ -109,7 +109,7 @@ impl AtmosphereRenderer {
 
             let pipeline = unsafe {
                 rctx.handles.device.create_graphics_pipelines(
-                    Some(rctx.pipeline_cache),
+                    rctx.pipeline_cache,
                     &pcis,
                     allocation_cbs(),
                 )
@@ -119,10 +119,10 @@ impl AtmosphereRenderer {
             unsafe {
                 rctx.handles
                     .device
-                    .destroy_shader_module(Some(vs), allocation_cbs());
+                    .destroy_shader_module(vs, allocation_cbs());
                 rctx.handles
                     .device
-                    .destroy_shader_module(Some(fs), allocation_cbs());
+                    .destroy_shader_module(fs, allocation_cbs());
             }
             pipeline
         };
@@ -137,10 +137,10 @@ impl AtmosphereRenderer {
         unsafe {
             handles
                 .device
-                .destroy_pipeline(Some(self.sky_pipeline), allocation_cbs());
+                .destroy_pipeline(self.sky_pipeline, allocation_cbs());
             handles
                 .device
-                .destroy_pipeline_layout(Some(self.sky_pipeline_layout), allocation_cbs());
+                .destroy_pipeline_layout(self.sky_pipeline_layout, allocation_cbs());
         }
     }
 

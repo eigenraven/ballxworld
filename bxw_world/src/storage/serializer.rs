@@ -10,15 +10,15 @@ pub struct SerializedChunkData {
 }
 
 thread_local! {
-static ZSTD_COMPRESSOR: RefCell<zstd::block::Compressor> = RefCell::new(zstd::block::Compressor::new());
-static ZSTD_DECOMPRESSOR: RefCell<zstd::block::Decompressor> = RefCell::new(zstd::block::Decompressor::new());
+static ZSTD_COMPRESSOR: RefCell<zstd::bulk::Compressor<'static>> = RefCell::new(zstd::bulk::Compressor::new(STORAGE_ZSTD_COMPRESS_LEVEL).unwrap());
+static ZSTD_DECOMPRESSOR: RefCell<zstd::bulk::Decompressor<'static>> = RefCell::new(zstd::bulk::Decompressor::new().unwrap());
 }
 const STORAGE_ZSTD_COMPRESS_LEVEL: i32 = 8;
 const STORAGE_ZSTD_DECOMPRESS_SIZE_LIMIT: usize = 4 * 1024 * 1024;
 
 pub fn storage_zstd_compress(data: &[u8]) -> Vec<u8> {
     ZSTD_COMPRESSOR
-        .with(|c| c.borrow_mut().compress(data, STORAGE_ZSTD_COMPRESS_LEVEL))
+        .with(|c| c.borrow_mut().compress(data))
         .expect("Unexpected compression error")
 }
 
