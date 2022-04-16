@@ -11,7 +11,7 @@ edition = "2021"
 [dependencies]
 bytemuck = { version = "1.9", features = ["extern_crate_alloc", "extern_crate_std", "min_const_generics", "derive"] }
 noise = "0.7"
-rusqlite = { version = "0.25", features = ["bundled", "backup", "blob", "limits"] }
+rusqlite = { version = "0.27", features = ["bundled", "backup", "blob", "limits"] }
 bxw_util = { path = "../bxw_util" }
 
 [features]

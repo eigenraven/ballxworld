@@ -9,8 +9,8 @@ use bxw_util::direction::*;
 use bxw_util::math::*;
 use bxw_util::*;
 use bxw_world::TextureMapping;
-pub use egui::math as emath;
-pub use egui::paint as epaint;
+pub use egui::emath;
+pub use egui::epaint;
 use itertools::zip;
 use std::borrow::Cow;
 use std::ffi::CString;
@@ -878,7 +878,7 @@ impl GuiRenderer {
 
         egui::Window::new("My Window")
             .resizable(true)
-            .scroll(true)
+            .vscroll(true)
             .show(&self.egui_integ.context(), |ui| {
                 ui.heading("Hello");
                 ui.label("Hello egui!");

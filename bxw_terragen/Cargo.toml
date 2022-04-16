@@ -23,5 +23,4 @@ profile-with-tracy = ["bxw_util/profile-with-tracy", "bxw_world/profile-with-tra
 [dependencies]
 bxw_util = { path = "../bxw_util" }
 bxw_world = { path = "../bxw_world" }
-image = { version = "0.23", optional = true }
-
+image = { version = "0.24", optional = true, default-features = false, features = ["bmp", "png"] }

@@ -53,9 +53,9 @@
 use crate::{client::render::vulkan::allocation_cbs, vk};
 use bxw_util::bytemuck::bytes_of;
 use egui::{
-    math::{pos2, vec2},
-    paint::ClippedShape,
-    CtxRef, Key,
+    emath::{pos2, vec2},
+    epaint::ClippedShape,
+    Context, Key,
 };
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
@@ -71,7 +71,7 @@ pub struct EguiIntegration {
     logical_width: u32,
     logical_height: u32,
     scale_factor: f64,
-    context: CtxRef,
+    context: Context,
     raw_input: egui::RawInput,
     mouse_pos: egui::Pos2,
     current_cursor_icon: egui::CursorIcon,
@@ -109,7 +109,7 @@ impl EguiIntegration {
         let scale_factor: f64 = logical_width as f64 / (rctx.window.size().0 as f64).max(1.0);
 
         // Create context
-        let context = CtxRef::default();
+        let context = Context::default();
         context.set_fonts(font_definitions);
         context.set_style(style);
 
@@ -501,7 +501,9 @@ impl EguiIntegration {
             // mouse wheel
             Event::MouseWheel { x, y, .. } => {
                 let wheel_factor = 1.0;
-                self.raw_input.scroll_delta = vec2(*x as f32, *y as f32) * wheel_factor;
+                self.raw_input.events.push(egui::Event::Scroll(
+                    vec2(*x as f32, *y as f32) * wheel_factor,
+                ));
             }
             // mouse move
             Event::MouseMotion { x, y, .. } => {
@@ -684,11 +686,16 @@ impl EguiIntegration {
         &mut self,
         sdl_video: &sdl2::VideoSubsystem,
     ) -> (
-        egui::Output,
+        egui::PlatformOutput,
         Vec<ClippedShape>,
         Option<sdl2::mouse::SystemCursor>,
     ) {
-        let (output, clipped_shapes) = self.context.end_frame();
+        let egui::FullOutput {
+            platform_output: output,
+            shapes: clipped_shapes,
+            textures_delta,
+            ..
+        } = self.context.end_frame();
 
         // handle links
         if let Some(egui::output::OpenUrl { url, .. }) = &output.open_url {
@@ -720,7 +727,7 @@ impl EguiIntegration {
     }
 
     /// Get [`egui::CtxRef`].
-    pub fn context(&self) -> CtxRef {
+    pub fn context(&self) -> Context {
         self.context.clone()
     }
 
@@ -737,7 +744,7 @@ impl EguiIntegration {
             egui::vec2(self.logical_width as f32, self.logical_height as f32),
         ));
         // update font texture
-        self.upload_font_texture(command_buffer, &self.context.fonts().texture(), fctx.rctx);
+        // FIXME: self.upload_font_texture(command_buffer, &self.context.fonts().texture(), fctx.rctx);
     }
 
     /// Record paint commands.
@@ -951,10 +958,10 @@ impl EguiIntegration {
     fn upload_font_texture(
         &mut self,
         command_buffer: vk::CommandBuffer,
-        texture: &egui::Texture,
+        textures: egui::TexturesDelta,
         rctx: &mut RenderingContext,
     ) {
-        assert_eq!(texture.pixels.len(), texture.width * texture.height);
+        /*assert_eq!(texture.pixels.len(), texture.width * texture.height);
         let device = &rctx.handles.device;
 
         // check version
@@ -1155,6 +1162,7 @@ impl EguiIntegration {
                     .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)],
             );
         }
+         */
     }
 
     /// Registering user texture.

@@ -16,21 +16,21 @@ edition = "2021"
 [dependencies]
 erupt = "0.22"
 ctrlc = { version = "3.1", features = ["termination"] }
-egui = { version = "0.14" }
+egui = { version = "0.17" }
 vk-mem-erupt = { git = "https://github.com/HindrikStegenga/vk-mem-erupt", rev = "0fc925b3ea3767e8c81b1362118015abaefe0ad4" }
-image = { version = "0.23", default-features = false, features = ["bmp", "png"] }
+image = { version = "0.24", default-features = false, features = ["bmp", "png"] }
 serde = { version = "1.0", features = ["derive", "rc"] } # Errors in macros if only in bxw_util, hence it's repeated here
 slice-deque = "0.3"
 num_enum = "0.5"
 log4rs = { version = "1.0.0", features = ["all_components", "console_writer", "background_rotation", "config_parsing", "toml_format"] }
 rpmalloc-sys = { version = "0.2.1", features = [] }
-mio = { version = "0.7.13", features = ["os-poll", "net"] }
+mio = { version = "0.8.2", features = ["os-poll", "net"] }
 bxw_util = { path = "bxw_util" }
 bxw_world = { path = "bxw_world" }
 bxw_terragen = { path = "bxw_terragen" }
 
 [dependencies.sdl2]
-version = "0.34"
+version = "0.35"
 features = []
 
 [features]
