@@ -1,9 +1,9 @@
 //! Authentication and packet encoding (as these are tied together by encryption)
 
-use crate::network::packets::auth::{ClientConnectionType, ConnectionResponse, PacketTypeHandshake, PktCSConnectionRequestPayload, PktSCConnectionRequestAckPayload, PktSCHandshakeAckPayload};
+use crate::network::packets::auth::{ClientConnectionType, ConnectionResponse, PacketTypeHandshake, PktCSConnectionRequestPayload, PktSCConnectionRequestAckPayload};
 use crate::network::packets::PACKET_PROTOCOL_CURRENT_VERSION;
 use bxw_util::rmp_serde;
-use bxw_util::sodiumoxide::crypto::{box_, hash::sha256 as hash, kx, sealedbox, secretbox};
+use bxw_util::sodiumoxide::crypto::{box_, sealedbox, secretbox};
 use bxw_util::sodiumoxide::padding;
 use bxw_util::zstd;
 use num_enum::*;
@@ -80,7 +80,7 @@ pub fn net_mpack_serialize<M: Serialize>(m: &M) -> Vec<u8> {
 
 pub use rmp_serde::decode::Error as PacketDeserializeError;
 
-use super::packets::auth::{ConnectionCookie, PktCSHandshakePayload};
+use super::packets::auth::{ConnectionCookie};
 
 pub fn net_mpack_deserialize<'a, M: Deserialize<'a>>(
     m: &'a [u8],
@@ -688,7 +688,7 @@ const DDOS_HARD: u8 = 20;
 pub fn authflow_server_respond_to_connection_request(
     state: ServerConnectionRequestState,
     my_pubkey: &box_::PublicKey,
-    my_seckey: &box_::SecretKey,
+    _my_seckey: &box_::SecretKey,
     server_name: Arc<str>,
     response: ConnectionResponse,
     ddos_protection_hard: bool,
@@ -735,10 +735,10 @@ impl ServerHandshakeState1 {
 }
 
 pub fn authflow_server_try_accept_handshake_packet(
-    packet: &[u8],
-    source: &[u8],
-    server_token_key: &secretbox::Key,
-    ddos_protection_hard: bool,
+    _packet: &[u8],
+    _source: &[u8],
+    _server_token_key: &secretbox::Key,
+    _ddos_protection_hard: bool,
 ) -> Result<ServerHandshakeState1, PacketProcessingError> {
     /*let decoded = PacketV1::try_decode_connection_handshake(packet)?;
     let msg: PktCSHandshakePayload = net_mpack_deserialize(&decoded.message)?;
@@ -794,11 +794,11 @@ pub fn authflow_server_try_accept_handshake_packet(
 }
 
 pub fn authflow_server_respond_to_handshake_packet(
-    state: ServerHandshakeState1,
-    my_pubkey: &box_::PublicKey,
-    my_seckey: &box_::SecretKey,
-    my_name: String,
-    response: ConnectionResponse,
+    _state: ServerHandshakeState1,
+    _my_pubkey: &box_::PublicKey,
+    _my_seckey: &box_::SecretKey,
+    _my_name: String,
+    _response: ConnectionResponse,
 ) -> Result<(Vec<u8>, ServersideConnectionCryptoState), PacketProcessingError> {
     /*let ServerHandshakeState1 {
         packet: initial_packet,
@@ -845,9 +845,9 @@ pub struct ClientsideConnectionCryptoState {
 }
 
 pub fn authflow_client_try_accept_handshake_ack(
-    state: &ClientHandshakeState1,
-    packet: &[u8],
-    my_keypair: (&box_::PublicKey, &box_::SecretKey),
+    _state: &ClientHandshakeState1,
+    _packet: &[u8],
+    _my_keypair: (&box_::PublicKey, &box_::SecretKey),
 ) -> Result<(ConnectionResponse, ClientsideConnectionCryptoState), PacketProcessingError> {
     /*
     let ClientHandshakeState1 {

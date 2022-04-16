@@ -30,11 +30,11 @@ fn vulk_allocations() -> MappedMutexGuard<'static, RawMutex, FnvHashMap<usize, s
 }
 
 unsafe extern "system" fn vk_reallocate(
-    p_user_data: *mut std::ffi::c_void,
+    _p_user_data: *mut std::ffi::c_void,
     p_original: *mut std::ffi::c_void,
     size: usize,
     alignment: usize,
-    allocation_scope: vk::SystemAllocationScope,
+    _allocation_scope: vk::SystemAllocationScope,
 ) -> *mut std::ffi::c_void {
     let original_layout = vulk_allocations().remove(&(p_original as usize)).expect("Vulkan trying to free memory without matching allocation");
     let new_layout = std::alloc::Layout::from_size_align(size, alignment).unwrap();
@@ -56,10 +56,10 @@ unsafe extern "system" fn vk_reallocate(
 }
 
 unsafe extern "system" fn vk_allocate(
-    p_user_data: *mut std::ffi::c_void,
+    _p_user_data: *mut std::ffi::c_void,
     size: usize,
     alignment: usize,
-    allocation_scope: vk::SystemAllocationScope,
+    _allocation_scope: vk::SystemAllocationScope,
 ) -> *mut std::ffi::c_void {
     let layout = std::alloc::Layout::from_size_align(size, alignment).unwrap();
     let ptr = unsafe {
@@ -70,7 +70,7 @@ unsafe extern "system" fn vk_allocate(
 }
 
 unsafe extern "system" fn vk_free(
-    p_user_data: *mut std::ffi::c_void,
+    _p_user_data: *mut std::ffi::c_void,
     p_memory: *mut std::ffi::c_void,
 ) {
     let layout = vulk_allocations().remove(&(p_memory as usize)).expect("Vulkan trying to free memory without matching allocation");
@@ -749,7 +749,7 @@ impl RenderingHandles {
         } = self;
         if mainpass != vk::RenderPass::null() {
             unsafe {
-                device.destroy_render_pass((mainpass), allocation_cbs());
+                device.destroy_render_pass(mainpass, allocation_cbs());
             }
         }
         let mut vmalloc = Arc::try_unwrap(vmalloc)
@@ -758,13 +758,13 @@ impl RenderingHandles {
 
         vmalloc.destroy();
         unsafe {
-            instance.destroy_surface_khr((surface), allocation_cbs());
+            instance.destroy_surface_khr(surface, allocation_cbs());
         }
         let oneoff_cmd_pool = Arc::try_unwrap(oneoff_cmd_pool)
             .unwrap_or_else(|_| panic!("Multiple references to oneoff_cmd_pool"))
             .into_inner();
         unsafe {
-            device.destroy_command_pool((oneoff_cmd_pool), allocation_cbs());
+            device.destroy_command_pool(oneoff_cmd_pool, allocation_cbs());
         }
         unsafe {
             device.destroy_device(allocation_cbs());
@@ -772,7 +772,7 @@ impl RenderingHandles {
         if let Some(ext_debug) = ext_debug {
             unsafe {
                 instance.destroy_debug_utils_messenger_ext(
-                    (ext_debug.debug_messenger),
+                    ext_debug.debug_messenger,
                     allocation_cbs(),
                 );
             }
@@ -810,7 +810,7 @@ impl Swapchain {
         for fence in self.inflight_fences.drain(..) {
             if fence != vk::Fence::null() {
                 unsafe {
-                    handles.device.destroy_fence((fence), allocation_cbs());
+                    handles.device.destroy_fence(fence, allocation_cbs());
                 }
             }
         }
@@ -823,7 +823,7 @@ impl Swapchain {
                 unsafe {
                     handles
                         .device
-                        .destroy_semaphore((semaphore), allocation_cbs());
+                        .destroy_semaphore(semaphore, allocation_cbs());
                 }
             }
         }
@@ -832,7 +832,7 @@ impl Swapchain {
                 unsafe {
                     handles
                         .device
-                        .destroy_framebuffer((fb), allocation_cbs());
+                        .destroy_framebuffer(fb, allocation_cbs());
                 }
             }
         }
@@ -841,7 +841,7 @@ impl Swapchain {
                 unsafe {
                     handles
                         .device
-                        .destroy_image_view((iv), allocation_cbs());
+                        .destroy_image_view(iv, allocation_cbs());
                 }
             }
         }
@@ -858,7 +858,7 @@ impl Swapchain {
             unsafe {
                 handles
                     .device
-                    .destroy_swapchain_khr((self.swapchain), allocation_cbs());
+                    .destroy_swapchain_khr(self.swapchain, allocation_cbs());
             }
             self.swapchain = vk::SwapchainKHR::null();
         }
@@ -957,7 +957,7 @@ impl Swapchain {
         unsafe {
             handles
                 .device
-                .destroy_swapchain_khr((old_swapchain), allocation_cbs());
+                .destroy_swapchain_khr(old_swapchain, allocation_cbs());
         }
 
         self.outdated = false;
@@ -1166,7 +1166,7 @@ impl RenderingContext {
             unsafe {
                 self.handles
                     .device
-                    .destroy_pipeline_cache((self.pipeline_cache), allocation_cbs());
+                    .destroy_pipeline_cache(self.pipeline_cache, allocation_cbs());
             }
             self.pipeline_cache = vk::PipelineCache::null();
         }
@@ -1175,7 +1175,7 @@ impl RenderingContext {
             unsafe {
                 self.handles
                     .device
-                    .destroy_command_pool((self.cmd_pool), allocation_cbs());
+                    .destroy_command_pool(self.cmd_pool, allocation_cbs());
             }
             self.cmd_pool = vk::CommandPool::null();
         }
@@ -1265,7 +1265,7 @@ impl RenderingContext {
                 self.handles.device.acquire_next_image_khr(
                     self.swapchain.swapchain,
                     u64::MAX,
-                    (self.swapchain.inflight_image_available_semaphores[inflight_index]),
+                    self.swapchain.inflight_image_available_semaphores[inflight_index],
                     vk::Fence::null(),
                 )
             };
@@ -1423,7 +1423,7 @@ impl RenderingContext {
             me.handles.device.queue_submit(
                 *queue,
                 &[si],
-                (me.swapchain.inflight_fences[inflight_index]),
+                me.swapchain.inflight_fences[inflight_index],
             )
         }
         .expect("Couldn't submit frame command buffer");

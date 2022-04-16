@@ -363,7 +363,7 @@ impl ServerNetmain {
         source.extend_from_slice(&socket_id.to_ne_bytes());
         //TODO: ip source.extend_from_slice(from);
         let conntable_entry = self.connected_clients.entry(csrc);
-        if let std::collections::hash_map::Entry::Occupied(conntable_entry) = conntable_entry {
+        if let std::collections::hash_map::Entry::Occupied(_conntable_entry) = conntable_entry {
             //
         } else {
             let shs1 = match protocol::authflow_server_try_accept_handshake_packet(msg, &source, &self.shared_state.server_token_key, false) {

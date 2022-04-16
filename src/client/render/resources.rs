@@ -131,13 +131,13 @@ impl RenderingResources {
         unsafe {
             handles
                 .device
-                .destroy_sampler((self.voxel_texture_sampler), allocation_cbs());
+                .destroy_sampler(self.voxel_texture_sampler, allocation_cbs());
             handles
                 .device
-                .destroy_sampler((self.font_sampler), allocation_cbs());
+                .destroy_sampler(self.font_sampler, allocation_cbs());
             handles
                 .device
-                .destroy_sampler((self.gui_sampler), allocation_cbs());
+                .destroy_sampler(self.gui_sampler, allocation_cbs());
         }
         self.voxel_texture_name_map.clear();
         let mut vmalloc = handles.vmalloc.lock();

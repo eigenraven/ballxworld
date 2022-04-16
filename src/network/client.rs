@@ -148,7 +148,7 @@ const NET_CLIENT_CONNECTION_TIMEOUT: time::Duration = time::Duration::from_secs(
 const NET_CLIENT_POLL_MQ_INTERVAL: time::Duration = time::Duration::from_millis(5);
 
 fn client_netmain(
-    cfg: ConfigHandle,
+    _cfg: ConfigHandle,
     control: flume::Receiver<ClientControlMessage>,
     socket: std::net::UdpSocket,
     shared_data: Arc<ClientSharedData>,
@@ -242,7 +242,7 @@ fn client_netmain(
         bxw_util::sodiumoxide::hex::encode(&cccstate.server_id)
     );
     let mut last_recv_time = time::Instant::now();
-    let mut last_send_time = last_recv_time;
+    let last_send_time = last_recv_time;
     let mut send_keepalive = true;
     // Main network loop
     'netloop: loop {
