@@ -337,12 +337,8 @@ impl<'h> OnetimeCmdGuard<'h> {
 
         let pool_lock = self.pool_lock.take();
         let sis = [vk::SubmitInfoBuilder::new().command_buffers(&bufs)];
-        unsafe {
-            handles
-                .device
-                .queue_submit(**queue, &sis, self.fence.fence)
-        }
-        .expect("Couldn't submit one-time cmd buffer");
+        unsafe { handles.device.queue_submit(**queue, &sis, self.fence.fence) }
+            .expect("Couldn't submit one-time cmd buffer");
         self.fence
             .wait(None)
             .expect("Failed waiting for one-time cmd fence");

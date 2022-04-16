@@ -2,8 +2,8 @@ use crate::config::ConfigHandle;
 use crate::network::packets;
 use crate::network::packets::auth::{ClientConnectionType, ConnectionResponse};
 use crate::network::protocol::{
-    authflow_client_connection_request_packet, authflow_client_try_accept_handshake_ack, PacketStream,
-    PacketV1, NET_KEEPALIVE_INTERVAL,
+    authflow_client_connection_request_packet, authflow_client_try_accept_handshake_ack,
+    PacketStream, PacketV1, NET_KEEPALIVE_INTERVAL,
 };
 use bxw_util::flume;
 use bxw_util::log;

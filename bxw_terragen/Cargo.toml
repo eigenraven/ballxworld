@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Jakub Szewczyk (kubasz)"]
 license = "GPL-3.0-only"
 repository = "https://github.com/kubasz/ballxworld"
-edition = "2018"
+edition = "2021"
 
 [lib]
 name = "bxw_terragen"

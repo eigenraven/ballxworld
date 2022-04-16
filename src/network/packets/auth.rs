@@ -9,10 +9,10 @@
 //!
 //! This is designed so that UDP packets with forged source addresses have minimal possible impact on the server,
 //! as they don't need to allocate any persistent structures until a solved challenge is received.
-use bxw_util::sodiumoxide::crypto::{box_, kx, hash::sha256 as hash};
-use std::sync::Arc;
+use bxw_util::sodiumoxide::crypto::{box_, hash::sha256 as hash, kx};
 use num_enum::*;
 use serde::*;
+use std::sync::Arc;
 
 #[repr(u8)]
 #[derive(

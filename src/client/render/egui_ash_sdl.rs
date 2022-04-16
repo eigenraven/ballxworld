@@ -1251,8 +1251,10 @@ impl EguiIntegration {
     /// This method release vk objects memory that is not managed by Rust.
     pub unsafe fn destroy(&mut self, handles: &RenderingHandles) {
         let device = &handles.device;
-        device.destroy_descriptor_set_layout(self.user_texture_layout, None);
-        device.destroy_image_view(self.font_image_view, None);
+        unsafe {
+            device.destroy_descriptor_set_layout(self.user_texture_layout, None);
+            device.destroy_image_view(self.font_image_view, None);
+        }
         let vmalloc = handles.vmalloc.lock();
         vmalloc.destroy_image(self.font_image, &self.font_image_allocation);
         vmalloc.destroy_buffer(
@@ -1266,12 +1268,18 @@ impl EguiIntegration {
             vmalloc.destroy_buffer(self.vertex_buffers[i], &self.vertex_buffer_allocations[i]);
         }
         drop(vmalloc);
-        device.destroy_sampler(self.sampler, None);
-        device.destroy_pipeline(self.pipeline, None);
-        device.destroy_pipeline_layout(self.pipeline_layout, None);
-        for &descriptor_set_layout in self.descriptor_set_layouts.iter() {
-            device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+        unsafe {
+            device.destroy_sampler(self.sampler, None);
+            device.destroy_pipeline(self.pipeline, None);
+            device.destroy_pipeline_layout(self.pipeline_layout, None);
         }
-        device.destroy_descriptor_pool(self.descriptor_pool, None);
+        for &descriptor_set_layout in self.descriptor_set_layouts.iter() {
+            unsafe {
+                device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+            }
+        }
+        unsafe {
+            device.destroy_descriptor_pool(self.descriptor_pool, None);
+        }
     }
 }

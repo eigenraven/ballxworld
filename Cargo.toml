@@ -11,7 +11,7 @@ license = "GPL-3.0-only"
 repository = "https://github.com/kubasz/ballxworld"
 keywords = ["gaming", "games", "voxel"]
 categories = ["games"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 erupt = "0.22"

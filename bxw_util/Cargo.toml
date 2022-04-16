@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Jakub Szewczyk (kubasz)"]
 license = "GPL-3.0-only"
 repository = "https://github.com/kubasz/ballxworld"
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 bytemuck = { version = "1.9", features = ["extern_crate_alloc", "extern_crate_std", "min_const_generics", "derive"] }

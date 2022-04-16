@@ -374,10 +374,11 @@ pub fn client_main() {
                     pl_cidx,
                 );
                 if let Some(pl_cidx) = pl_cidx {
-                    let handler_statuses = std::array::IntoIter::new([
+                    let handler_statuses = [
                         bxw_world::worldmgr::CHUNK_BLOCK_DATA,
                         bxw_world::worldmgr::CHUNK_MESH_DATA,
-                    ])
+                    ]
+                    .into_iter()
                     .map(|hid| world.get_handler(hid).borrow().status_array()[pl_cidx]);
                     use std::fmt::Write;
                     writeln!(&mut debug_panel_text, "Chunk data states: ",).unwrap();

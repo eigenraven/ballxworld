@@ -1,6 +1,9 @@
 //! Authentication and packet encoding (as these are tied together by encryption)
 
-use crate::network::packets::auth::{ClientConnectionType, ConnectionResponse, PacketTypeHandshake, PktCSConnectionRequestPayload, PktSCConnectionRequestAckPayload};
+use crate::network::packets::auth::{
+    ClientConnectionType, ConnectionResponse, PacketTypeHandshake, PktCSConnectionRequestPayload,
+    PktSCConnectionRequestAckPayload,
+};
 use crate::network::packets::PACKET_PROTOCOL_CURRENT_VERSION;
 use bxw_util::rmp_serde;
 use bxw_util::sodiumoxide::crypto::{box_, sealedbox, secretbox};
@@ -80,7 +83,7 @@ pub fn net_mpack_serialize<M: Serialize>(m: &M) -> Vec<u8> {
 
 pub use rmp_serde::decode::Error as PacketDeserializeError;
 
-use super::packets::auth::{ConnectionCookie};
+use super::packets::auth::ConnectionCookie;
 
 pub fn net_mpack_deserialize<'a, M: Deserialize<'a>>(
     m: &'a [u8],
@@ -999,8 +1002,9 @@ mod test {
             authflow_client_connection_request_packet(&client_pk, ClientConnectionType::GameClient)
                 .expect("Error in client handshake authflow");
         // Server:
-        let shs = authflow_server_try_accept_handshake_packet(&cs0, &client_addr, &server_tk, false)
-            .expect("Error in server handshake accept authflow");
+        let shs =
+            authflow_server_try_accept_handshake_packet(&cs0, &client_addr, &server_tk, false)
+                .expect("Error in server handshake accept authflow");
         assert_eq!(shs.get_request().c_type, ClientConnectionType::GameClient);
         assert_eq!(shs.get_request().c_player_id, client_pk);
         assert_eq!(

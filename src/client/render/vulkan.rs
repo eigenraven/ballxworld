@@ -5,9 +5,14 @@ use crate::client::world::ClientWorld;
 use crate::config::Config;
 use crate::vk;
 use bxw_util::debug_data::DEBUG_DATA;
+use bxw_util::fnv::FnvHashMap;
+use bxw_util::parking_lot::lock_api::MappedMutexGuard;
+use bxw_util::parking_lot::RawMutex;
 use bxw_util::*;
 use erupt::vk::EXT_DEBUG_UTILS_EXTENSION_NAME;
-use erupt::{DeviceLoader, DeviceLoaderBuilder, EntryLoader, InstanceLoader, InstanceLoaderBuilder};
+use erupt::{
+    DeviceLoader, DeviceLoaderBuilder, EntryLoader, InstanceLoader, InstanceLoaderBuilder,
+};
 use num_traits::clamp;
 use parking_lot::{Mutex, MutexGuard};
 use sdl2::video::Window;
@@ -19,14 +24,15 @@ use std::os::raw::c_char;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Weak};
 use vk_mem_erupt as vma;
-use bxw_util::fnv::FnvHashMap;
-use bxw_util::parking_lot::lock_api::MappedMutexGuard;
-use bxw_util::parking_lot::RawMutex;
 
-static VULK_ALLOCATIONS: Mutex<Option<fnv::FnvHashMap<usize, std::alloc::Layout>>> = Mutex::new(None);
+static VULK_ALLOCATIONS: Mutex<Option<fnv::FnvHashMap<usize, std::alloc::Layout>>> =
+    Mutex::new(None);
 
-fn vulk_allocations() -> MappedMutexGuard<'static, RawMutex, FnvHashMap<usize, std::alloc::Layout>> {
-    MutexGuard::map(VULK_ALLOCATIONS.lock(), |v| v.get_or_insert_with(Default::default))
+fn vulk_allocations() -> MappedMutexGuard<'static, RawMutex, FnvHashMap<usize, std::alloc::Layout>>
+{
+    MutexGuard::map(VULK_ALLOCATIONS.lock(), |v| {
+        v.get_or_insert_with(Default::default)
+    })
 }
 
 unsafe extern "system" fn vk_reallocate(
@@ -36,17 +42,23 @@ unsafe extern "system" fn vk_reallocate(
     alignment: usize,
     _allocation_scope: vk::SystemAllocationScope,
 ) -> *mut std::ffi::c_void {
-    let original_layout = vulk_allocations().remove(&(p_original as usize)).expect("Vulkan trying to free memory without matching allocation");
+    let original_layout = vulk_allocations()
+        .remove(&(p_original as usize))
+        .expect("Vulkan trying to free memory without matching allocation");
     let new_layout = std::alloc::Layout::from_size_align(size, alignment).unwrap();
-    let new_ptr = if alignment == original_layout.align() { unsafe {
-        std::alloc::realloc(p_original as *mut u8, original_layout, size) as *mut c_void
-    }} else {
+    let new_ptr = if alignment == original_layout.align() {
+        unsafe { std::alloc::realloc(p_original as *mut u8, original_layout, size) as *mut c_void }
+    } else {
         unsafe {
             let new_ptr = std::alloc::alloc_zeroed(new_layout);
             if new_ptr.is_null() {
                 panic!("Couldn't allocate memory for Vulkan");
             }
-            std::ptr::copy_nonoverlapping(p_original as *mut u8, new_ptr, original_layout.size().min(size));
+            std::ptr::copy_nonoverlapping(
+                p_original as *mut u8,
+                new_ptr,
+                original_layout.size().min(size),
+            );
             std::alloc::dealloc(p_original as *mut u8, original_layout);
             new_ptr as *mut c_void
         }
@@ -62,9 +74,7 @@ unsafe extern "system" fn vk_allocate(
     _allocation_scope: vk::SystemAllocationScope,
 ) -> *mut std::ffi::c_void {
     let layout = std::alloc::Layout::from_size_align(size, alignment).unwrap();
-    let ptr = unsafe {
-        std::alloc::alloc_zeroed(layout) as *mut c_void
-    };
+    let ptr = unsafe { std::alloc::alloc_zeroed(layout) as *mut c_void };
     vulk_allocations().insert(ptr as usize, layout);
     ptr
 }
@@ -73,7 +83,9 @@ unsafe extern "system" fn vk_free(
     _p_user_data: *mut std::ffi::c_void,
     p_memory: *mut std::ffi::c_void,
 ) {
-    let layout = vulk_allocations().remove(&(p_memory as usize)).expect("Vulkan trying to free memory without matching allocation");
+    let layout = vulk_allocations()
+        .remove(&(p_memory as usize))
+        .expect("Vulkan trying to free memory without matching allocation");
     unsafe {
         std::alloc::dealloc(p_memory as *mut u8, layout);
     }
@@ -85,14 +97,15 @@ unsafe impl Send for AllocationCallbacksHolder {}
 // Safety: these are statically initialized, non-changing function pointers
 unsafe impl Sync for AllocationCallbacksHolder {}
 
-static ALLOCATION_CBS: AllocationCallbacksHolder = AllocationCallbacksHolder(vk::AllocationCallbacks {
-    p_user_data: std::ptr::null_mut(),
-    pfn_allocation: Some(vk_allocate),
-    pfn_reallocation: Some(vk_reallocate),
-    pfn_free: Some(vk_free),
-    pfn_internal_allocation: None,
-    pfn_internal_free: None
-});
+static ALLOCATION_CBS: AllocationCallbacksHolder =
+    AllocationCallbacksHolder(vk::AllocationCallbacks {
+        p_user_data: std::ptr::null_mut(),
+        pfn_allocation: Some(vk_allocate),
+        pfn_reallocation: Some(vk_reallocate),
+        pfn_free: Some(vk_free),
+        pfn_internal_allocation: None,
+        pfn_internal_free: None,
+    });
 
 pub fn allocation_cbs() -> Option<&'static vk::AllocationCallbacks> {
     Some(&ALLOCATION_CBS.0)
@@ -415,8 +428,12 @@ impl RenderingHandles {
                 .queue_create_infos(&queue_families);
 
             Arc::new(
-                unsafe { DeviceLoaderBuilder::new().allocation_callbacks(allocation_cbs().unwrap()).build(&instance, physical, &dci) }
-                    .expect("Couldn't create Vulkan device"),
+                unsafe {
+                    DeviceLoaderBuilder::new()
+                        .allocation_callbacks(allocation_cbs().unwrap())
+                        .build(&instance, physical, &dci)
+                }
+                .expect("Couldn't create Vulkan device"),
             )
         };
         let queues = if queue_cnt > 1 {
@@ -661,8 +678,12 @@ impl RenderingHandles {
             .enabled_layer_names(&enabled_layers)
             .enabled_extension_names(&enabled_exts);
         let instance = Arc::new(
-            unsafe { InstanceLoaderBuilder::new().allocation_callbacks(allocation_cbs().unwrap()).build(entry, &ici) }
-                .expect("Couldn't create Vulkan instance"),
+            unsafe {
+                InstanceLoaderBuilder::new()
+                    .allocation_callbacks(allocation_cbs().unwrap())
+                    .build(entry, &ici)
+            }
+            .expect("Couldn't create Vulkan instance"),
         );
 
         if has_debug {
@@ -771,10 +792,8 @@ impl RenderingHandles {
         }
         if let Some(ext_debug) = ext_debug {
             unsafe {
-                instance.destroy_debug_utils_messenger_ext(
-                    ext_debug.debug_messenger,
-                    allocation_cbs(),
-                );
+                instance
+                    .destroy_debug_utils_messenger_ext(ext_debug.debug_messenger, allocation_cbs());
             }
         }
         unsafe {
@@ -830,18 +849,14 @@ impl Swapchain {
         for fb in self.framebuffers.drain(..) {
             if !fb.is_null() {
                 unsafe {
-                    handles
-                        .device
-                        .destroy_framebuffer(fb, allocation_cbs());
+                    handles.device.destroy_framebuffer(fb, allocation_cbs());
                 }
             }
         }
         for iv in self.swapimageviews.drain(..) {
             if !iv.is_null() {
                 unsafe {
-                    handles
-                        .device
-                        .destroy_image_view(iv, allocation_cbs());
+                    handles.device.destroy_image_view(iv, allocation_cbs());
                 }
             }
         }
@@ -1093,8 +1108,7 @@ impl Swapchain {
             self.inflight_render_finished_semaphores.push(rfsem);
             self.inflight_image_available_semaphores.push(iasem);
 
-            let fci = vk::FenceCreateInfoBuilder::new()
-                .flags(vk::FenceCreateFlags::SIGNALED);
+            let fci = vk::FenceCreateInfoBuilder::new().flags(vk::FenceCreateFlags::SIGNALED);
             let iff = unsafe { handles.device.create_fence(&fci, allocation_cbs()) }
                 .expect("Could not create Vulkan fence");
             self.inflight_fences.push(iff);
