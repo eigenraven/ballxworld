@@ -3,6 +3,7 @@ use crate::client::render::vkhelpers::{
 };
 use crate::client::world::ClientWorld;
 use crate::config::Config;
+use crate::log::error;
 use crate::vk;
 use bxw_util::debug_data::DEBUG_DATA;
 use bxw_util::fnv::FnvHashMap;
@@ -63,6 +64,9 @@ unsafe extern "system" fn vk_reallocate(
             new_ptr as *mut c_void
         }
     };
+    if new_ptr.is_null() {
+        panic!("Couldn't reallocate vulkan memory");
+    }
     vulk_allocations().insert(new_ptr as usize, new_layout);
     new_ptr
 }
@@ -83,6 +87,9 @@ unsafe extern "system" fn vk_free(
     _p_user_data: *mut std::ffi::c_void,
     p_memory: *mut std::ffi::c_void,
 ) {
+    if p_memory.is_null() {
+        return;
+    }
     let layout = vulk_allocations()
         .remove(&(p_memory as usize))
         .expect("Vulkan trying to free memory without matching allocation");
@@ -324,6 +331,10 @@ unsafe extern "system" fn debug_msg_callback(
         unsafe { CStr::from_ptr(cb_data.p_message_id_name) }.to_string_lossy(),
     );
     log::log!(target: "vulkan", log_severity, "{}", str_msg);
+    if msg_severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::ERROR_EXT {
+        let bt = backtrace::Backtrace::new();
+        log::error!(target: "vulkan", "{:?}", bt);
+    }
     vk::FALSE
 }
 
@@ -779,7 +790,8 @@ impl RenderingHandles {
 
         vmalloc.destroy();
         unsafe {
-            instance.destroy_surface_khr(surface, allocation_cbs());
+            // allocator: None because that's what SDL specifies
+            instance.destroy_surface_khr(surface, None);
         }
         let oneoff_cmd_pool = Arc::try_unwrap(oneoff_cmd_pool)
             .unwrap_or_else(|_| panic!("Multiple references to oneoff_cmd_pool"))

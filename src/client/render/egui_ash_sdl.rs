@@ -136,7 +136,7 @@ impl EguiIntegration {
                     .pool_sizes(&[vk::DescriptorPoolSizeBuilder::new()
                         ._type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                         .descriptor_count(1024)]),
-                None,
+                allocation_cbs(),
             )
         }
         .expect("Failed to create descriptor pool.");
@@ -155,7 +155,7 @@ impl EguiIntegration {
                                     .binding(0)
                                     .stage_flags(vk::ShaderStageFlags::FRAGMENT),
                             ]),
-                            None,
+                            allocation_cbs(),
                         )
                     }
                     .expect("Failed to create descriptor set layout."),
@@ -175,7 +175,7 @@ impl EguiIntegration {
                             .offset(0)
                             .size(std::mem::size_of::<f32>() as u32 * 2), // screen size
                     ]),
-                None,
+                allocation_cbs(),
             )
         }
         .expect("Failed to create pipeline layout.");
@@ -319,7 +319,7 @@ impl EguiIntegration {
                     .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
                     .min_lod(0.0)
                     .max_lod(vk::LOD_CLAMP_NONE),
-                None,
+                allocation_cbs(),
             )
         }
         .expect("Failed to create sampler.");
@@ -1260,8 +1260,8 @@ impl EguiIntegration {
     pub unsafe fn destroy(&mut self, handles: &RenderingHandles) {
         let device = &handles.device;
         unsafe {
-            device.destroy_descriptor_set_layout(self.user_texture_layout, None);
-            device.destroy_image_view(self.font_image_view, None);
+            device.destroy_descriptor_set_layout(self.user_texture_layout, allocation_cbs());
+            device.destroy_image_view(self.font_image_view, allocation_cbs());
         }
         let vmalloc = handles.vmalloc.lock();
         vmalloc.destroy_image(self.font_image, &self.font_image_allocation);
@@ -1277,17 +1277,17 @@ impl EguiIntegration {
         }
         drop(vmalloc);
         unsafe {
-            device.destroy_sampler(self.sampler, None);
-            device.destroy_pipeline(self.pipeline, None);
-            device.destroy_pipeline_layout(self.pipeline_layout, None);
+            device.destroy_sampler(self.sampler, allocation_cbs());
+            device.destroy_pipeline(self.pipeline, allocation_cbs());
+            device.destroy_pipeline_layout(self.pipeline_layout, allocation_cbs());
         }
         for &descriptor_set_layout in self.descriptor_set_layouts.iter() {
             unsafe {
-                device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+                device.destroy_descriptor_set_layout(descriptor_set_layout, allocation_cbs());
             }
         }
         unsafe {
-            device.destroy_descriptor_pool(self.descriptor_pool, None);
+            device.destroy_descriptor_pool(self.descriptor_pool, allocation_cbs());
         }
     }
 }

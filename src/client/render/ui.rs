@@ -893,7 +893,7 @@ impl GuiRenderer {
     }
 
     pub fn late_prepass_draw(&mut self, fctx: &mut PrePassFrameContext) {
-        self.egui_integ.prepass_draw(fctx.cmd, fctx);
+        // FIXME: self.egui_integ.prepass_draw(fctx.cmd, fctx);
     }
 
     #[allow(clippy::cast_ptr_alignment)]
@@ -968,7 +968,7 @@ impl GuiRenderer {
         }
         let (_output, shapes, cursor) = self.egui_integ.end_frame(fctx.rctx.window.subsystem());
         let clipped_meshes = self.egui_integ.context().tessellate(shapes);
-        self.egui_integ.paint(fctx.cmd, clipped_meshes, fctx);
+        // FIXME: self.egui_integ.paint(fctx.cmd, clipped_meshes, fctx);
         if let Some(_cursor) = cursor {
             //TODO:fwd to InputManager
         }
