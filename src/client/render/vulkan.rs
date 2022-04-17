@@ -90,11 +90,15 @@ unsafe extern "system" fn vk_free(
     if p_memory.is_null() {
         return;
     }
-    let layout = vulk_allocations()
-        .remove(&(p_memory as usize))
-        .expect("Vulkan trying to free memory without matching allocation");
-    unsafe {
-        std::alloc::dealloc(p_memory as *mut u8, layout);
+    if let Some(layout) = vulk_allocations().remove(&(p_memory as usize)) {
+        unsafe {
+            std::alloc::dealloc(p_memory as *mut u8, layout);
+        }
+    } else {
+        log::warn!(
+            "Vulkan trying to free memory without matching allocation at {:?}",
+            p_memory
+        );
     }
 }
 
