@@ -18,7 +18,8 @@ static TRACK_ALLOCATOR: TrackingAllocator<rpmalloc::RpMalloc> = TrackingAllocato
 
 fn main() {
     setup_logging();
-    bxw_util::tracy_client::set_thread_name("main");
+    bxw_util::tracy_client::Client::start();
+    bxw_util::tracy_client::set_thread_name!("bxw-main");
     bxw_util::sodiumoxide::init().expect("Couldn't initialize cryptography library");
     if std::env::args().any(|a| a == "-server") {
         server::main::server_main();

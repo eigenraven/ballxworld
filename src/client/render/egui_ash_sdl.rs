@@ -54,7 +54,7 @@ use crate::{client::render::vulkan::allocation_cbs, vk};
 use bxw_util::bytemuck::bytes_of;
 use egui::{
     emath::{pos2, vec2},
-    epaint::ClippedShape,
+    epaint::{ClippedShape, Primitive},
     Context, Key,
 };
 use sdl2::event::{Event, WindowEvent};
@@ -673,6 +673,16 @@ impl EguiIntegration {
             egui::CursorIcon::AllScroll => sdl2::mouse::SystemCursor::Arrow,
             egui::CursorIcon::ZoomIn => sdl2::mouse::SystemCursor::SizeAll,
             egui::CursorIcon::ZoomOut => sdl2::mouse::SystemCursor::SizeAll,
+            egui::CursorIcon::ResizeEast => sdl2::mouse::SystemCursor::SizeNESW,
+            egui::CursorIcon::ResizeSouthEast => sdl2::mouse::SystemCursor::SizeNESW,
+            egui::CursorIcon::ResizeSouth => sdl2::mouse::SystemCursor::SizeNESW,
+            egui::CursorIcon::ResizeSouthWest => sdl2::mouse::SystemCursor::SizeNESW,
+            egui::CursorIcon::ResizeWest => sdl2::mouse::SystemCursor::SizeNESW,
+            egui::CursorIcon::ResizeNorthWest => sdl2::mouse::SystemCursor::SizeNESW,
+            egui::CursorIcon::ResizeNorth => sdl2::mouse::SystemCursor::SizeNESW,
+            egui::CursorIcon::ResizeNorthEast => sdl2::mouse::SystemCursor::SizeNESW,
+            egui::CursorIcon::ResizeColumn => sdl2::mouse::SystemCursor::SizeWE,
+            egui::CursorIcon::ResizeRow => sdl2::mouse::SystemCursor::SizeNS,
         })
     }
 
@@ -751,7 +761,7 @@ impl EguiIntegration {
     pub fn paint(
         &mut self,
         command_buffer: vk::CommandBuffer,
-        clipped_meshes: Vec<egui::ClippedMesh>,
+        clipped_meshes: Vec<egui::ClippedPrimitive>,
         fctx: &mut InPassFrameContext,
     ) {
         // update time
@@ -828,115 +838,121 @@ impl EguiIntegration {
         // render meshes
         let mut vertex_base = 0;
         let mut index_base = 0;
-        for egui::ClippedMesh(rect, mesh) in clipped_meshes {
-            // update texture
-            unsafe {
-                if let egui::TextureId::User(id) = mesh.texture_id {
-                    if let Some(descriptor_set) = self.user_textures[id as usize] {
+        for egui::ClippedPrimitive {
+            clip_rect: rect,
+            primitive: mesh,
+        } in clipped_meshes
+        {
+            if let Primitive::Mesh(mesh) = mesh {
+                // update texture
+                unsafe {
+                    if let egui::TextureId::User(id) = mesh.texture_id {
+                        if let Some(descriptor_set) = self.user_textures[id as usize] {
+                            device.cmd_bind_descriptor_sets(
+                                command_buffer,
+                                vk::PipelineBindPoint::GRAPHICS,
+                                self.pipeline_layout,
+                                0,
+                                &[descriptor_set],
+                                &[],
+                            );
+                        } else {
+                            eprintln!(
+                                "This UserTexture has already been unregistered: {:?}",
+                                mesh.texture_id
+                            );
+                            continue;
+                        }
+                    } else {
                         device.cmd_bind_descriptor_sets(
                             command_buffer,
                             vk::PipelineBindPoint::GRAPHICS,
                             self.pipeline_layout,
                             0,
-                            &[descriptor_set],
+                            &[self.font_descriptor_sets[fctx.inflight_index]],
                             &[],
                         );
-                    } else {
-                        eprintln!(
-                            "This UserTexture has already been unregistered: {:?}",
-                            mesh.texture_id
-                        );
-                        continue;
                     }
-                } else {
-                    device.cmd_bind_descriptor_sets(
+                }
+
+                if mesh.vertices.is_empty() || mesh.indices.is_empty() {
+                    continue;
+                }
+
+                let v_slice = &mesh.vertices;
+                let v_size = std::mem::size_of_val(&v_slice[0]);
+                let v_copy_size = v_slice.len() * v_size;
+
+                let i_slice = &mesh.indices;
+                let i_size = std::mem::size_of_val(&i_slice[0]);
+                let i_copy_size = i_slice.len() * i_size;
+
+                let vertex_buffer_ptr_next = unsafe { vertex_buffer_ptr.add(v_copy_size) };
+                let index_buffer_ptr_next = unsafe { index_buffer_ptr.add(i_copy_size) };
+
+                if vertex_buffer_ptr_next >= vertex_buffer_ptr_end
+                    || index_buffer_ptr_next >= index_buffer_ptr_end
+                {
+                    panic!("egui paint out of memory");
+                }
+
+                // map memory
+                unsafe { vertex_buffer_ptr.copy_from(v_slice.as_ptr() as *const u8, v_copy_size) };
+                unsafe { index_buffer_ptr.copy_from(i_slice.as_ptr() as *const u8, i_copy_size) };
+
+                vertex_buffer_ptr = vertex_buffer_ptr_next;
+                index_buffer_ptr = index_buffer_ptr_next;
+
+                // record draw commands
+                unsafe {
+                    let min = rect.min;
+                    let min = egui::Pos2 {
+                        x: min.x * self.scale_factor as f32,
+                        y: min.y * self.scale_factor as f32,
+                    };
+                    let min = egui::Pos2 {
+                        x: f32::clamp(min.x, 0.0, self.logical_width as f32),
+                        y: f32::clamp(min.y, 0.0, self.logical_height as f32),
+                    };
+                    let max = rect.max;
+                    let max = egui::Pos2 {
+                        x: max.x * self.scale_factor as f32,
+                        y: max.y * self.scale_factor as f32,
+                    };
+                    let max = egui::Pos2 {
+                        x: f32::clamp(max.x, min.x, self.logical_width as f32),
+                        y: f32::clamp(max.y, min.y, self.logical_height as f32),
+                    };
+                    device.cmd_set_scissor(
                         command_buffer,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        self.pipeline_layout,
                         0,
-                        &[self.font_descriptor_sets[fctx.inflight_index]],
-                        &[],
+                        &[vk::Rect2DBuilder::new()
+                            .offset(
+                                vk::Offset2DBuilder::new()
+                                    .x(min.x.round() as i32)
+                                    .y(min.y.round() as i32)
+                                    .build(),
+                            )
+                            .extent(
+                                vk::Extent2DBuilder::new()
+                                    .width((max.x.round() - min.x) as u32)
+                                    .height((max.y.round() - min.y) as u32)
+                                    .build(),
+                            )],
+                    );
+                    device.cmd_draw_indexed(
+                        command_buffer,
+                        mesh.indices.len() as u32,
+                        1,
+                        index_base,
+                        vertex_base,
+                        0,
                     );
                 }
+
+                vertex_base += mesh.vertices.len() as i32;
+                index_base += mesh.indices.len() as u32;
             }
-
-            if mesh.vertices.is_empty() || mesh.indices.is_empty() {
-                continue;
-            }
-
-            let v_slice = &mesh.vertices;
-            let v_size = std::mem::size_of_val(&v_slice[0]);
-            let v_copy_size = v_slice.len() * v_size;
-
-            let i_slice = &mesh.indices;
-            let i_size = std::mem::size_of_val(&i_slice[0]);
-            let i_copy_size = i_slice.len() * i_size;
-
-            let vertex_buffer_ptr_next = unsafe { vertex_buffer_ptr.add(v_copy_size) };
-            let index_buffer_ptr_next = unsafe { index_buffer_ptr.add(i_copy_size) };
-
-            if vertex_buffer_ptr_next >= vertex_buffer_ptr_end
-                || index_buffer_ptr_next >= index_buffer_ptr_end
-            {
-                panic!("egui paint out of memory");
-            }
-
-            // map memory
-            unsafe { vertex_buffer_ptr.copy_from(v_slice.as_ptr() as *const u8, v_copy_size) };
-            unsafe { index_buffer_ptr.copy_from(i_slice.as_ptr() as *const u8, i_copy_size) };
-
-            vertex_buffer_ptr = vertex_buffer_ptr_next;
-            index_buffer_ptr = index_buffer_ptr_next;
-
-            // record draw commands
-            unsafe {
-                let min = rect.min;
-                let min = egui::Pos2 {
-                    x: min.x * self.scale_factor as f32,
-                    y: min.y * self.scale_factor as f32,
-                };
-                let min = egui::Pos2 {
-                    x: f32::clamp(min.x, 0.0, self.logical_width as f32),
-                    y: f32::clamp(min.y, 0.0, self.logical_height as f32),
-                };
-                let max = rect.max;
-                let max = egui::Pos2 {
-                    x: max.x * self.scale_factor as f32,
-                    y: max.y * self.scale_factor as f32,
-                };
-                let max = egui::Pos2 {
-                    x: f32::clamp(max.x, min.x, self.logical_width as f32),
-                    y: f32::clamp(max.y, min.y, self.logical_height as f32),
-                };
-                device.cmd_set_scissor(
-                    command_buffer,
-                    0,
-                    &[vk::Rect2DBuilder::new()
-                        .offset(
-                            vk::Offset2DBuilder::new()
-                                .x(min.x.round() as i32)
-                                .y(min.y.round() as i32)
-                                .build(),
-                        )
-                        .extent(
-                            vk::Extent2DBuilder::new()
-                                .width((max.x.round() - min.x) as u32)
-                                .height((max.y.round() - min.y) as u32)
-                                .build(),
-                        )],
-                );
-                device.cmd_draw_indexed(
-                    command_buffer,
-                    mesh.indices.len() as u32,
-                    1,
-                    index_base,
-                    vertex_base,
-                    0,
-                );
-            }
-
-            vertex_base += mesh.vertices.len() as i32;
-            index_base += mesh.indices.len() as u32;
         }
 
         // unmap buffers

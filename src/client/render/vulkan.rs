@@ -1230,13 +1230,7 @@ impl RenderingContext {
         let inflight_index = self.handles.inflight_index as usize;
         let inflight_fence = self.swapchain.inflight_fences[inflight_index];
         {
-            let _p_zone = bxw_util::tracy_client::Span::new(
-                "Wait for inflight fences",
-                "mainloop",
-                file!(),
-                line!(),
-                4,
-            );
+            let _p_zone = bxw_util::tracy_client::span!("Wait for inflight fences", 4);
             unsafe { device.wait_for_fences(&[inflight_fence], true, u64::max_value()) }
                 .expect("Failed waiting for fence");
             unsafe { device.reset_fences(&[inflight_fence]) }.expect("Couldn't reset fence");
@@ -1255,13 +1249,7 @@ impl RenderingContext {
         }
 
         {
-            let _p_zone = bxw_util::tracy_client::Span::new(
-                "Run frame destroy queue tasks",
-                "mainloop",
-                file!(),
-                line!(),
-                4,
-            );
+            let _p_zone = bxw_util::tracy_client::span!("Run frame destroy queue tasks", 4);
             for mut vdo in
                 self.handles.frame_destroy_queues.lock()[old_inflight_index as usize].drain(..)
             {
@@ -1448,7 +1436,6 @@ impl RenderingContext {
 
         let queue = me.handles.queues.lock_primary_queue();
 
-        bxw_util::tracy_client::message("vk Frame Queue Submit", 4);
         unsafe {
             me.handles.device.queue_submit(
                 *queue,
@@ -1464,7 +1451,6 @@ impl RenderingContext {
             .wait_semaphores(&rendfinish)
             .swapchains(&swchs)
             .image_indices(&imgids);
-        bxw_util::tracy_client::message("vk Queue Present", 4);
         let result = unsafe { me.handles.device.queue_present_khr(*queue, &pi) };
         if result.raw == vk::Result::SUBOPTIMAL_KHR
             || result.raw == vk::Result::ERROR_OUT_OF_DATE_KHR
@@ -1473,6 +1459,5 @@ impl RenderingContext {
         } else if result.is_err() {
             panic!("{:?}", result.raw);
         }
-        bxw_util::tracy_client::message("Presented", 4);
     }
 }

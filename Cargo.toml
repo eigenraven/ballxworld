@@ -16,7 +16,7 @@ edition = "2021"
 [dependencies]
 erupt = "0.22"
 ctrlc = { version = "3.1", features = ["termination"] }
-egui = { version = "0.17" }
+egui = { version = "0.18.1" }
 vk-mem-erupt = { git = "https://github.com/HindrikStegenga/vk-mem-erupt", rev = "0fc925b3ea3767e8c81b1362118015abaefe0ad4" }
 image = { version = "0.24", default-features = false, features = ["bmp", "png"] }
 serde = { version = "1.0", features = ["derive", "rc"] } # Errors in macros if only in bxw_util, hence it's repeated here

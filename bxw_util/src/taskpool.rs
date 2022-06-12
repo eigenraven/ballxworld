@@ -64,12 +64,12 @@ fn task_pool_runner(params: TaskPoolRunnerParams) {
             .store(queue.len() as i32, Ordering::Release);
         tracy_msg.clear();
         write!(&mut tracy_msg, "Tasks in queue left: {}", queue.len()).unwrap_or(());
-        tracy_client::message(&tracy_msg, 1);
+        tracy_client::Client::start().message(&tracy_msg, 1);
         if let Some(task) = queue.pop_front() {
             drop(queue);
             task.execute();
         } else {
-            let _p_zone = tracy_client::Span::new("Idle", "task_pool_runner", file!(), line!(), 4);
+            let _p_zone = tracy_client::span!("Idle", 4);
             params.queue.1.wait(&mut queue);
         }
     }
@@ -116,7 +116,7 @@ impl TaskPool {
                     .name(format!("ballxworld-worker-{}", wid))
                     .stack_size(4 * 1024 * 1024) // 4 MiB stack for each worker
                     .spawn(move || {
-                        tracy_client::set_thread_name(std::thread::current().name().unwrap());
+                        tracy_client::Client::start().set_thread_name(std::thread::current().name().unwrap());
                         task_pool_runner(params);
                     })
                     .expect("Could not spawn worker thread");

@@ -64,7 +64,8 @@ impl<T> TracedMutex for parking_lot::Mutex<T> {
         file: &'static str,
         line: u32,
     ) -> parking_lot::MutexGuard<'_, Self::GuardedType> {
-        let _lockspan = tracy_client::Span::new(mutex_name, "lock_traced", file, line, 6);
+        let _lockspan =
+            tracy_client::Client::start().span_alloc(mutex_name, "lock_traced", file, line, 6);
         self.lock()
     }
 }
