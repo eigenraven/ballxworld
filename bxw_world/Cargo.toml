@@ -1,18 +1,20 @@
 [package]
 name = "bxw_world"
-version = "0.1.0"
-authors = ["Jakub Szewczyk (kubasz)"]
-license = "GPL-3.0-only"
-repository = "https://github.com/kubasz/ballxworld"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bytemuck = { version = "1.9", features = ["extern_crate_alloc", "extern_crate_std", "min_const_generics", "derive"] }
-noise = "0.7"
-rusqlite = { version = "0.27", features = ["bundled", "backup", "blob", "limits"] }
-bxw_util = { path = "../bxw_util" }
+bytemuck.workspace = true
+noise.workspace = true
+rusqlite.workspace = true
+bxw_util.workspace = true
 
 [features]
 default = []

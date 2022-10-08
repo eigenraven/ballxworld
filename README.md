@@ -15,7 +15,7 @@ sudo pacman -Syu --needed vulkan-devel shaderc sdl2
 
 #### Downloading & building
 ```shell
-git clone https://github.com/kubasz/ballxworld.git ballxworld
+git clone https://github.com/eigenraven/ballxworld.git ballxworld
 cd ballxworld
 cargo update
 cargo build [--release] # Add release if you want a fully optimized build

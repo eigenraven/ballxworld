@@ -1,9 +1,11 @@
 [package]
 name = "bxw_terragen"
-version = "0.1.0"
-authors = ["Jakub Szewczyk (kubasz)"]
-license = "GPL-3.0-only"
-repository = "https://github.com/kubasz/ballxworld"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
 edition = "2021"
 
 [lib]
@@ -21,6 +23,6 @@ images = ["image"]
 profile-with-tracy = ["bxw_util/profile-with-tracy", "bxw_world/profile-with-tracy"]
 
 [dependencies]
-bxw_util = { path = "../bxw_util" }
-bxw_world = { path = "../bxw_world" }
+bxw_util.workspace = true
+bxw_world.workspace = true
 image = { version = "0.24", optional = true, default-features = false, features = ["bmp", "png"] }

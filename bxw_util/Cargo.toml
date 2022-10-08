@@ -1,46 +1,48 @@
 [package]
 name = "bxw_util"
-version = "0.1.0"
-authors = ["Jakub Szewczyk (kubasz)"]
-license = "GPL-3.0-only"
-repository = "https://github.com/kubasz/ballxworld"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
 edition = "2021"
 
 [dependencies]
-bytemuck = { version = "1.9", features = ["extern_crate_alloc", "extern_crate_std", "min_const_generics", "derive"] }
-flume = { version = "0.10.8", default-features = false, features = ["eventual-fairness"] }
-rand = { version = "0.8", features = ["nightly", "simd_support"] }
-rand_distr = "0.4"
-rand_xoshiro = "0.6"
-rstar = "0.9"
-nalgebra = { version = "0.31", features = ["convert-bytemuck"] }
-glm = { version = "0.17", package = "nalgebra-glm" }
-packed_simd = { version = "0.3.6", package = "packed_simd_2" }
-simba = { version = "0.7", features = ["packed_simd"] }
-toml_edit = "0.14"
-thread_local_crate = { version = "1.0", package = "thread_local" }
-smallvec = "1"
-rayon = "1.5"
-scopeguard = "1.1"
-parking_lot = { version = "0.12", features = ["nightly"] }
-divrem = "1"
-num-traits = "0.2"
-fnv = "1.0"
-itertools = "0.10"
-regex = "1.5"
-log = "0.4"
-lru = "0.7"
-lazy_static = "1.4"
-num_cpus = "1.13"
-blake3 = "1"
-serde = { version = "1.0", features = ["derive", "rc"] }
-toml = "0.5"
-rmp = "0.8"
-rmp-serde = "1.0"
-sodiumoxide = "0.2.7"
-zstd = "0.11.1"
+bytemuck.workspace = true
+flume.workspace = true
+rand.workspace = true
+rand_distr.workspace = true
+rand_xoshiro.workspace = true
+rstar.workspace = true
+nalgebra.workspace = true
+glm.workspace = true
+packed_simd.workspace = true
+simba.workspace = true
+toml_edit.workspace = true
+thread_local_crate.workspace = true
+smallvec.workspace = true
+rayon.workspace = true
+scopeguard.workspace = true
+parking_lot.workspace = true
+divrem.workspace = true
+num-traits.workspace = true
+fnv.workspace = true
+itertools.workspace = true
+regex.workspace = true
+log.workspace = true
+lru.workspace = true
+lazy_static.workspace = true
+num_cpus.workspace = true
+blake3.workspace = true
+serde.workspace = true
+toml.workspace = true
+rmp.workspace = true
+rmp-serde.workspace = true
+sodiumoxide.workspace = true
+zstd.workspace = true
 
-tracy-client = { version = "0.14", default-features = false, features = ["system-tracing", "context-switch-tracing", "sampling", "code-transfer", "only-localhost", "fibers"] }
+tracy-client.workspace = true
 
 [features]
 default = []
