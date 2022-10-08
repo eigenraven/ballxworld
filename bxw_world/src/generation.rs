@@ -209,7 +209,7 @@ pub struct VCache {
 impl Default for VCache {
     fn default() -> Self {
         Self {
-            uncompressed_chunks: LruCache::new(64),
+            uncompressed_chunks: LruCache::new(64.try_into().unwrap()),
         }
     }
 }

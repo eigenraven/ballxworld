@@ -90,10 +90,10 @@ impl CellGen {
     fn new(seed: u64) -> Self {
         let mut s = Self {
             seed: 0,
-            height_map_gen: [SuperSimplex::new(); 5],
-            elevation_map_gen: SuperSimplex::new(),
-            moisture_map_gen: SuperSimplex::new(),
-            cell_points: LruCache::new(64),
+            height_map_gen: [SuperSimplex::new(0); 5],
+            elevation_map_gen: SuperSimplex::new(0),
+            moisture_map_gen: SuperSimplex::new(0),
+            cell_points: LruCache::new(64.try_into().unwrap()),
             nearest_buf: Vec::with_capacity(16),
         };
         s.set_seed(seed);
