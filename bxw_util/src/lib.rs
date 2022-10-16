@@ -31,7 +31,6 @@ pub use smallvec;
 pub use sodiumoxide;
 pub use thread_local_crate as thread_local;
 pub use toml;
-pub use toml_edit;
 pub use zstd;
 
 pub use tracy_client;

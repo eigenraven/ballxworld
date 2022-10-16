@@ -67,8 +67,8 @@ impl NetServer {
         let (scon_tx, scon_rx) = flume::bounded(SERVER_CONTROL_CHANNEL_BOUND);
         let sockets = {
             let mut v: Vec<mio::net::UdpSocket> =
-                Vec::with_capacity(cfg.read().server_listen_addresses.len());
-            for addr in cfg.read().server_listen_addresses.iter() {
+                Vec::with_capacity(cfg.read().network.listen_addresses.len());
+            for addr in cfg.read().network.listen_addresses.iter() {
                 match mio::net::UdpSocket::bind(*addr) {
                     Ok(sock) => {
                         v.push(sock);
@@ -229,7 +229,7 @@ impl ServerNetmain {
         sockets: Vec<mio::net::UdpSocket>,
         shared_state: Arc<NetServerSharedState>,
     ) -> Self {
-        let mtu = cfg.read().server_mtu;
+        let mtu = 1400;
         let num_socks = sockets.len();
         Self {
             cfg,

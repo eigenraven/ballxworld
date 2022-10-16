@@ -150,12 +150,11 @@ impl RenderingResources {
         _cfg: &Config,
         rctx: &mut RenderingContext,
     ) -> (OwnedImage, TextureArrayParams, FnvHashMap<String, u32>) {
-        use toml_edit::Document;
-
+        use toml::Value;
         let mf_str =
             std::fs::read_to_string("res/manifest.toml").expect("Couldn't read resource manifest");
         let manifest = mf_str
-            .parse::<Document>()
+            .parse::<Value>()
             .expect("Invalid configuration TOML.");
         let tkey = manifest["textures"]
             .as_table()

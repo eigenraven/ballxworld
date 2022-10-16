@@ -56,12 +56,12 @@ pub fn client_main() {
     let use_netclient = std::env::args().any(|a| a == "-netclient");
     if std::env::args().any(|a| a == "-renderdoc") {
         let mut cfg = cfg.write();
-        cfg.dbg_renderdoc = true;
-        cfg.vk_debug_layers = false;
+        cfg.debugging.renderdoc = true;
+        cfg.debugging.vk_debug_layers = false;
         log::warn!("Adjusting settings for renderdoc");
     }
 
-    let task_pool = bxw_util::taskpool::TaskPool::new(cfg.read().performance_threads as usize);
+    let task_pool = bxw_util::taskpool::TaskPool::new(cfg.read().performance.threads as usize);
     let mut rctx = Box::new(RenderingContext::new(&sdl_vid, &cfg.read()));
     let rres = Arc::new(RenderingResources::load(&cfg.read(), &mut rctx));
     let vctx = Rc::new(RefCell::new(VoxelRenderer::new(
@@ -96,7 +96,7 @@ pub fn client_main() {
         let ents = world.ecs();
         let anchor: &CLoadAnchor = ents.get_component(lp).unwrap();
         let mut new_anchor = anchor.clone();
-        new_anchor.radius = cfg.read().performance_load_distance;
+        new_anchor.radius = cfg.read().performance.draw_distance;
         let change = [EntityChange {
             kind: EntityChangeKind::UpdateEntity(anchor.entity_id()),
             load_anchor: Change::Update {
@@ -548,7 +548,7 @@ pub fn client_main() {
         drop(_p_span_input);
 
         let _p_fps_keeper = bxw_util::tracy_client::span!("FPS Target Keeper", 4);
-        if let Some(fps) = cfg.read().render_fps_lock {
+        if let Some(fps) = cfg.read().render.fps_lock {
             let end_current_frame_time = Instant::now() + Duration::from_micros(100);
             let target_ft = Duration::from_secs_f64(1.0 / f64::from(fps));
             let elapsed_ft = end_current_frame_time.saturating_duration_since(current_frame_time);

@@ -19,7 +19,6 @@ nalgebra.workspace = true
 glm.workspace = true
 packed_simd.workspace = true
 simba.workspace = true
-toml_edit.workspace = true
 thread_local_crate.workspace = true
 smallvec.workspace = true
 rayon.workspace = true

@@ -26,7 +26,7 @@ pub fn server_main() {
         cfg.write().save_toml()
     );
 
-    let task_pool = bxw_util::taskpool::TaskPool::new(cfg.read().performance_threads as usize);
+    let task_pool = bxw_util::taskpool::TaskPool::new(cfg.read().performance.threads as usize);
     let mut vxreg: Box<bxw_world::voxregistry::VoxelRegistry> = Box::default();
     register_standard_blocks(&mut vxreg, &|_| 0);
     let vxreg: Arc<bxw_world::voxregistry::VoxelRegistry> = Arc::from(vxreg);

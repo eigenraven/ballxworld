@@ -345,13 +345,13 @@ unsafe extern "system" fn debug_msg_callback(
 impl RenderingHandles {
     fn new(sdl_video: &sdl2::VideoSubsystem, cfg: &Config) -> (Window, Self) {
         sdl_video.vulkan_load_library_default().unwrap();
-        let mut window = sdl_video.window("BallX World", cfg.window_width, cfg.window_height);
+        let mut window = sdl_video.window("BallX World", cfg.window.width, cfg.window.height);
         window
             .position_centered()
             .vulkan()
             .allow_highdpi()
             .resizable();
-        if cfg.window_fullscreen {
+        if cfg.window.fullscreen {
             window.fullscreen();
         }
         let window = window.build().expect("Failed to create the game window");
@@ -452,7 +452,7 @@ impl RenderingHandles {
             )
         };
         let queues = if queue_cnt > 1 {
-            if cfg.debug_logging {
+            if cfg.debugging.logging {
                 log::info!("Creating 2 Vulkan queues for asynchronous operations");
             }
             let rqueue = unsafe { device.get_device_queue(queue_family.0, 0) };
@@ -462,7 +462,7 @@ impl RenderingHandles {
                 gtransfer: (Mutex::new(tqueue), queue_family.0),
             }
         } else {
-            if cfg.debug_logging {
+            if cfg.debugging.logging {
                 log::info!("Creating 1 Vulkan queue - more are not supported");
             }
             let rqueue = unsafe { device.get_device_queue(queue_family.0, 0) };
@@ -500,7 +500,7 @@ impl RenderingHandles {
             .unwrap_or(&formats[0]);
 
         let sample_count = {
-            let target = cfg.render_samples;
+            let target = cfg.render.samples;
             let mut samples = vk::SampleCountFlagBits::_1;
             let lim = physical_limits.framebuffer_color_sample_counts
                 & physical_limits.sampled_image_depth_sample_counts;
@@ -665,13 +665,13 @@ impl RenderingHandles {
         let mut raw_layers: Vec<CString> = Vec::new();
 
         let mut has_debug = false;
-        if cfg.vk_debug_layers || cfg.dbg_renderdoc {
+        if cfg.debugging.vk_debug_layers || cfg.debugging.renderdoc {
             let duname = unsafe { CStr::from_ptr(EXT_DEBUG_UTILS_EXTENSION_NAME) };
             if avail_enames.contains(&duname) {
                 raw_exts.push(duname.to_owned());
                 has_debug = true;
             }
-            if !cfg.dbg_renderdoc {
+            if !cfg.debugging.renderdoc {
                 let lname = CString::new("VK_LAYER_KHRONOS_validation").unwrap();
                 if avail_lnames.clone().any(|e| e == lname.as_c_str()) {
                     raw_layers.push(lname);
@@ -702,7 +702,7 @@ impl RenderingHandles {
         );
 
         if has_debug {
-            let ext_debug = if !cfg.dbg_renderdoc {
+            let ext_debug = if !cfg.debugging.renderdoc {
                 let mci = vk::DebugUtilsMessengerCreateInfoEXTBuilder::new()
                     .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::all())
                     .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
@@ -918,7 +918,7 @@ impl Swapchain {
         .expect("Failed to get surface present modes");
 
         let present_mode: vk::PresentModeKHR = {
-            if !cfg.render_wait_for_vsync {
+            if !cfg.render.wait_for_vsync {
                 present_modes
                     .iter()
                     .copied()
@@ -956,7 +956,7 @@ impl Swapchain {
             &[handles.queues.get_primary_family()],
         );
 
-        if cfg.debug_logging {
+        if cfg.debugging.logging {
             log::debug!(
                 "Recreating swapchain with size ({w}, {h}), {ic} images, {pm:?} present mode",
                 w = extent.width,

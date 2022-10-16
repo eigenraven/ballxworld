@@ -23,7 +23,6 @@ nalgebra = { version = "0.31", features = ["convert-bytemuck"] }
 glm = { version = "0.17", package = "nalgebra-glm" }
 packed_simd = { version = "0.3.8", package = "packed_simd_2" }
 simba = { version = "0.7", features = ["packed_simd"] }
-toml_edit = "0.14"
 thread_local_crate = { version = "1.1", package = "thread_local" }
 smallvec = "1"
 rayon = "1.5"
@@ -34,6 +33,7 @@ num-traits = "0.2"
 fnv = "1.0"
 itertools = "0.10"
 regex = "1.6"
+smart-default = "0.6.0"
 log = "0.4"
 lru = "0.8"
 lazy_static = "1.4"
@@ -71,6 +71,7 @@ vk-mem-erupt = { git = "https://github.com/HindrikStegenga/vk-mem-erupt", rev = 
 image = { version = "0.24", default-features = false, features = ["bmp", "png"] }
 serde.workspace = true
 slice-deque = "0.3"
+smart-default.workspace = true
 num_enum = "0.5"
 log4rs = { version = "1.0.0", features = ["all_components", "console_writer", "background_rotation", "config_parsing", "toml_format"] }
 rpmalloc-sys = { version = "0.2.1", features = [] }

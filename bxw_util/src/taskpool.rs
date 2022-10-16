@@ -116,7 +116,8 @@ impl TaskPool {
                     .name(format!("ballxworld-worker-{}", wid))
                     .stack_size(4 * 1024 * 1024) // 4 MiB stack for each worker
                     .spawn(move || {
-                        tracy_client::Client::start().set_thread_name(std::thread::current().name().unwrap());
+                        tracy_client::Client::start()
+                            .set_thread_name(std::thread::current().name().unwrap());
                         task_pool_runner(params);
                     })
                     .expect("Could not spawn worker thread");
