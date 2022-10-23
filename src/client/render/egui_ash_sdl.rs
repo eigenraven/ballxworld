@@ -51,7 +51,8 @@
 #![warn(missing_docs)]
 
 use crate::{client::render::vulkan::allocation_cbs, vk};
-use bxw_util::bytemuck::bytes_of;
+use bxw_util::fnv::FnvHashMap;
+use bxw_util::{bytemuck::bytes_of, itertools::Itertools};
 use egui::{
     emath::{pos2, vec2},
     epaint::{ClippedShape, Primitive},
@@ -61,10 +62,14 @@ use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use std::ffi::CStr;
 
+use crate::client::render::vkhelpers::{OwnedBuffer, OwnedDescriptorSet, OwnedImage};
 use crate::client::render::vulkan::INFLIGHT_FRAMES;
 use crate::client::render::RenderingContext;
 
-use super::{vulkan::RenderingHandles, InPassFrameContext, PrePassFrameContext};
+use super::{
+    vkhelpers::VulkanDeviceObject, vulkan::RenderingHandles, InPassFrameContext,
+    PrePassFrameContext,
+};
 
 /// egui integration with winit, ash and vk_mem_erupt.
 pub struct EguiIntegration {
@@ -77,7 +82,7 @@ pub struct EguiIntegration {
     current_cursor_icon: egui::CursorIcon,
 
     descriptor_pool: vk::DescriptorPool,
-    descriptor_set_layouts: Vec<vk::DescriptorSetLayout>,
+    descriptor_set_layout: vk::DescriptorSetLayout,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
     sampler: vk::Sampler,
@@ -85,25 +90,14 @@ pub struct EguiIntegration {
     vertex_buffer_allocations: Vec<vk_mem_erupt::Allocation>,
     index_buffers: Vec<vk::Buffer>,
     index_buffer_allocations: Vec<vk_mem_erupt::Allocation>,
-    font_image_staging_buffer: vk::Buffer,
-    font_image_staging_buffer_allocation: vk_mem_erupt::Allocation,
-    font_image: vk::Image,
-    font_image_allocation: vk_mem_erupt::Allocation,
-    font_image_view: vk::ImageView,
-    font_image_size: (u64, u64),
-    font_image_version: u64,
-    font_descriptor_sets: vk::SmallVec<vk::DescriptorSet>,
-
-    user_texture_layout: vk::DescriptorSetLayout,
-    user_textures: Vec<Option<vk::DescriptorSet>>,
+    managed_images: FnvHashMap<u64, (OwnedImage, OwnedDescriptorSet)>,
+    clipped_primitives: Vec<egui::ClippedPrimitive>,
 }
 impl EguiIntegration {
     /// Create an instance of the integration.
-    pub fn new(
-        font_definitions: egui::FontDefinitions,
-        style: egui::Style,
-        rctx: &mut RenderingContext,
-    ) -> Self {
+    pub fn new(rctx: &mut RenderingContext) -> Self {
+        let font_definitions = egui::FontDefinitions::default();
+        let style = egui::Style::default();
         let device = &rctx.handles.device;
         let (logical_width, logical_height) = rctx.window.vulkan_drawable_size();
         let scale_factor: f64 = logical_width as f64 / (rctx.window.size().0 as f64).max(1.0);
@@ -112,6 +106,7 @@ impl EguiIntegration {
         let context = Context::default();
         context.set_fonts(font_definitions);
         context.set_style(style);
+        context.set_visuals(egui::Visuals::dark());
 
         // Create raw_input
         let raw_input = egui::RawInput {
@@ -142,33 +137,25 @@ impl EguiIntegration {
         .expect("Failed to create descriptor pool.");
 
         // Create DescriptorSetLayouts
-        let descriptor_set_layouts = {
-            let mut sets = vec![];
-            for _ in 0..INFLIGHT_FRAMES {
-                sets.push(
-                    unsafe {
-                        device.create_descriptor_set_layout(
-                            &vk::DescriptorSetLayoutCreateInfoBuilder::new().bindings(&[
-                                vk::DescriptorSetLayoutBindingBuilder::new()
-                                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                                    .descriptor_count(1)
-                                    .binding(0)
-                                    .stage_flags(vk::ShaderStageFlags::FRAGMENT),
-                            ]),
-                            allocation_cbs(),
-                        )
-                    }
-                    .expect("Failed to create descriptor set layout."),
-                );
-            }
-            sets
-        };
+        let descriptor_set_layout = unsafe {
+            device.create_descriptor_set_layout(
+                &vk::DescriptorSetLayoutCreateInfoBuilder::new().bindings(&[
+                    vk::DescriptorSetLayoutBindingBuilder::new()
+                        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                        .descriptor_count(1)
+                        .binding(0)
+                        .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+                ]),
+                allocation_cbs(),
+            )
+        }
+        .expect("Failed to create descriptor set layout.");
 
         // Create PipelineLayout
         let pipeline_layout = unsafe {
             device.create_pipeline_layout(
                 &vk::PipelineLayoutCreateInfoBuilder::new()
-                    .set_layouts(&descriptor_set_layouts)
+                    .set_layouts(&[descriptor_set_layout])
                     .push_constant_ranges(&[
                         vk::PushConstantRangeBuilder::new()
                             .stage_flags(vk::ShaderStageFlags::VERTEX)
@@ -366,40 +353,6 @@ impl EguiIntegration {
         }
         drop(vmalloc);
 
-        // Create font image and anything related to it
-        // These values will be uploaded at rendering time
-        let font_image_staging_buffer = Default::default();
-        let font_image_staging_buffer_allocation = vk_mem_erupt::Allocation::null();
-        let font_image = Default::default();
-        let font_image_allocation = vk_mem_erupt::Allocation::null();
-        let font_image_view = Default::default();
-        let font_image_size = (0, 0);
-        let font_image_version = 0;
-        let font_descriptor_sets = unsafe {
-            device.allocate_descriptor_sets(
-                &vk::DescriptorSetAllocateInfoBuilder::new()
-                    .descriptor_pool(descriptor_pool)
-                    .set_layouts(&descriptor_set_layouts),
-            )
-        }
-        .expect("Failed to create descriptor sets.");
-
-        // User Textures
-        let user_texture_layout = unsafe {
-            device.create_descriptor_set_layout(
-                &vk::DescriptorSetLayoutCreateInfoBuilder::new().bindings(&[
-                    vk::DescriptorSetLayoutBindingBuilder::new()
-                        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                        .descriptor_count(1)
-                        .binding(0)
-                        .stage_flags(vk::ShaderStageFlags::FRAGMENT),
-                ]),
-                allocation_cbs(),
-            )
-        }
-        .expect("Failed to create descriptor set layout.");
-        let user_textures = vec![];
-
         Self {
             logical_width,
             logical_height,
@@ -410,7 +363,7 @@ impl EguiIntegration {
             current_cursor_icon: egui::CursorIcon::None,
 
             descriptor_pool,
-            descriptor_set_layouts,
+            descriptor_set_layout,
             pipeline_layout,
             pipeline,
             sampler,
@@ -418,17 +371,8 @@ impl EguiIntegration {
             vertex_buffer_allocations,
             index_buffers,
             index_buffer_allocations,
-            font_image_staging_buffer,
-            font_image_staging_buffer_allocation,
-            font_image,
-            font_image_allocation,
-            font_image_view,
-            font_image_size,
-            font_image_version,
-            font_descriptor_sets,
-
-            user_texture_layout,
-            user_textures,
+            managed_images: Default::default(),
+            clipped_primitives: Default::default(),
         }
     }
 
@@ -620,6 +564,21 @@ impl EguiIntegration {
             Keycode::X => Key::X,
             Keycode::Y => Key::Y,
             Keycode::Z => Key::Z,
+            Keycode::F1 => Key::F1,
+            Keycode::F2 => Key::F2,
+            Keycode::F3 => Key::F3,
+            Keycode::F4 => Key::F4,
+            Keycode::F5 => Key::F5,
+            Keycode::F6 => Key::F6,
+            Keycode::F7 => Key::F7,
+            Keycode::F8 => Key::F8,
+            Keycode::F9 => Key::F9,
+            Keycode::F10 => Key::F10,
+            Keycode::F11 => Key::F11,
+            Keycode::F12 => Key::F12,
+            Keycode::F13 => Key::F13,
+            Keycode::F14 => Key::F14,
+            Keycode::F15 => Key::F15,
             _ => return None,
         })
     }
@@ -686,34 +645,38 @@ impl EguiIntegration {
         })
     }
 
-    /// begin frame.
-    pub fn begin_frame(&mut self) {
-        self.context.begin_frame(self.raw_input.take());
+    /// Get [`egui::CtxRef`].
+    pub fn context(&self) -> Context {
+        self.context.clone()
     }
 
-    /// end frame.
-    pub fn end_frame(
+    /// Update textures etc.
+    pub fn prepass_draw(
         &mut self,
-        sdl_video: &sdl2::VideoSubsystem,
-    ) -> (
-        egui::PlatformOutput,
-        Vec<ClippedShape>,
-        Option<sdl2::mouse::SystemCursor>,
+        command_buffer: vk::CommandBuffer,
+        fctx: &mut PrePassFrameContext,
+        run_ui: impl FnOnce(&Context),
     ) {
+        self.logical_width = fctx.dims[0];
+        self.logical_height = fctx.dims[1];
+        self.raw_input.screen_rect = Some(egui::Rect::from_min_size(
+            Default::default(),
+            egui::vec2(self.logical_width as f32, self.logical_height as f32),
+        ));
         let egui::FullOutput {
             platform_output: output,
             shapes: clipped_shapes,
             textures_delta,
             ..
-        } = self.context.end_frame();
-
+        } = self.context.run(self.raw_input.clone(), run_ui);
+        self.raw_input.time = Some(self.raw_input.time.unwrap_or(0.0) + fctx.delta_time);
+        self.raw_input.events.clear();
+        let sdl_video = fctx.rctx.window.subsystem();
         // handle links
         if let Some(egui::output::OpenUrl { url, .. }) = &output.open_url {
-            let _ = url;
-            // TODO(https://github.com/Rust-SDL2/rust-sdl2/issues/1119)
-            /*if let Err(err) = webbrowser::open(url) {
+            if let Err(err) = sdl2::url::open_url(url) {
                 eprintln!("Failed to open url: {}", err);
-            }*/
+            }
         }
 
         // handle clipboard
@@ -733,35 +696,37 @@ impl EguiIntegration {
             self.current_cursor_icon = output.cursor_icon;
         }
 
-        (output, clipped_shapes, cursor)
-    }
+        // handle text input
+        {
+            let tinput = sdl_video.text_input();
+            let active = tinput.is_active();
+            if !active && output.mutable_text_under_cursor {
+                tinput.start();
+            } else if active && !output.mutable_text_under_cursor {
+                tinput.stop();
+            }
+            if output.mutable_text_under_cursor {
+                if let Some(cursor_pos) = output.text_cursor_pos {
+                    tinput.set_rect(sdl2::rect::Rect::new(
+                        cursor_pos.x as i32,
+                        cursor_pos.y as i32,
+                        16,
+                        16,
+                    ));
+                }
+            }
+        }
 
-    /// Get [`egui::CtxRef`].
-    pub fn context(&self) -> Context {
-        self.context.clone()
-    }
-
-    /// Update textures etc.
-    pub fn prepass_draw(
-        &mut self,
-        command_buffer: vk::CommandBuffer,
-        fctx: &mut PrePassFrameContext,
-    ) {
-        self.logical_width = fctx.dims[0];
-        self.logical_height = fctx.dims[1];
-        self.raw_input.screen_rect = Some(egui::Rect::from_min_size(
-            Default::default(),
-            egui::vec2(self.logical_width as f32, self.logical_height as f32),
-        ));
         // update font texture
-        // FIXME: self.upload_font_texture(command_buffer, &self.context.fonts().texture(), fctx.rctx);
+        self.update_textures(command_buffer, textures_delta, fctx.rctx);
+
+        self.clipped_primitives = self.context.tessellate(clipped_shapes);
     }
 
     /// Record paint commands.
-    pub fn paint(
+    pub fn inpass_draw(
         &mut self,
         command_buffer: vk::CommandBuffer,
-        clipped_meshes: Vec<egui::ClippedPrimitive>,
         fctx: &mut InPassFrameContext,
     ) {
         // update time
@@ -841,35 +806,25 @@ impl EguiIntegration {
         for egui::ClippedPrimitive {
             clip_rect: rect,
             primitive: mesh,
-        } in clipped_meshes
+        } in &self.clipped_primitives
         {
             if let Primitive::Mesh(mesh) = mesh {
                 // update texture
-                unsafe {
-                    if let egui::TextureId::User(id) = mesh.texture_id {
-                        if let Some(descriptor_set) = self.user_textures[id as usize] {
-                            device.cmd_bind_descriptor_sets(
-                                command_buffer,
-                                vk::PipelineBindPoint::GRAPHICS,
-                                self.pipeline_layout,
-                                0,
-                                &[descriptor_set],
-                                &[],
-                            );
-                        } else {
-                            eprintln!(
-                                "This UserTexture has already been unregistered: {:?}",
-                                mesh.texture_id
-                            );
-                            continue;
-                        }
-                    } else {
+                let descriptor = match mesh.texture_id {
+                    egui::TextureId::User(id) => None, // TODO
+                    egui::TextureId::Managed(id) => {
+                        self.managed_images.get(&id).map(|(_img, ds)| ds.1)
+                    }
+                    _ => None,
+                };
+                if let Some(descriptor) = descriptor {
+                    unsafe {
                         device.cmd_bind_descriptor_sets(
                             command_buffer,
                             vk::PipelineBindPoint::GRAPHICS,
                             self.pipeline_layout,
                             0,
-                            &[self.font_descriptor_sets[fctx.inflight_index]],
+                            &[descriptor],
                             &[],
                         );
                     }
@@ -971,301 +926,122 @@ impl EguiIntegration {
         vmalloc.unmap_memory(&self.index_buffer_allocations[fctx.inflight_index]);
     }
 
-    fn upload_font_texture(
+    fn update_textures(
         &mut self,
         command_buffer: vk::CommandBuffer,
         textures: egui::TexturesDelta,
         rctx: &mut RenderingContext,
     ) {
-        /*assert_eq!(texture.pixels.len(), texture.width * texture.height);
-        let device = &rctx.handles.device;
-
-        // check version
-        if texture.version == self.font_image_version {
-            return;
-        }
-
-        // FIXME: Use multiple images, gc the unused ones
-        unsafe {
-            device
-                .device_wait_idle()
-                .expect("Failed to wait device idle");
-        }
-
-        let dimensions = (texture.width as u64, texture.height as u64);
-        let data = texture
-            .pixels
-            .iter()
-            .flat_map(|&r| vec![r, r, r, r])
-            .collect::<Vec<_>>();
-
-        let vmalloc = rctx.handles.vmalloc.lock();
-        // free prev staging buffer
-        vmalloc.destroy_buffer(
-            self.font_image_staging_buffer,
-            &self.font_image_staging_buffer_allocation,
-        );
-
-        // free font image
-        unsafe {
-            device.destroy_image_view(self.font_image_view, None);
-        }
-        vmalloc.destroy_image(self.font_image, &self.font_image_allocation);
-
-        // create font image
-        let (font_image_staging_buffer, font_image_staging_buffer_allocation, _info) = vmalloc
-            .create_buffer(
-                &vk::BufferCreateInfoBuilder::new()
-                    .usage(vk::BufferUsageFlags::TRANSFER_SRC)
-                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                    .size(dimensions.0 * dimensions.1 * 4),
-                &vk_mem_erupt::AllocationCreateInfo {
-                    usage: vk_mem_erupt::MemoryUsage::CpuOnly,
-                    required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
-                        | vk::MemoryPropertyFlags::HOST_COHERENT,
-                    ..Default::default()
-                },
-            )
-            .expect("Couldn't create font image staging buffer");
-        self.font_image_staging_buffer = font_image_staging_buffer;
-        self.font_image_staging_buffer_allocation = font_image_staging_buffer_allocation;
-        let (font_image, font_image_allocation, _info) = vmalloc
-            .create_image(
-                &vk::ImageCreateInfoBuilder::new()
-                    .format(vk::Format::R8G8B8A8_UNORM)
-                    .initial_layout(vk::ImageLayout::UNDEFINED)
-                    .samples(vk::SampleCountFlagBits::_1)
-                    .tiling(vk::ImageTiling::OPTIMAL)
-                    .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST)
-                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                    .image_type(vk::ImageType::_2D)
-                    .mip_levels(1)
-                    .array_layers(1)
-                    .extent(vk::Extent3D {
-                        width: dimensions.0 as u32,
-                        height: dimensions.1 as u32,
-                        depth: 1,
-                    }),
-                &vk_mem_erupt::AllocationCreateInfo {
-                    usage: vk_mem_erupt::MemoryUsage::GpuOnly,
-                    ..Default::default()
-                },
-            )
-            .expect("Failed to create image.");
-        self.font_image = font_image;
-        self.font_image_allocation = font_image_allocation;
-        self.font_image_view = unsafe {
-            device.create_image_view(
-                &vk::ImageViewCreateInfoBuilder::new()
-                    .image(self.font_image)
-                    .format(vk::Format::R8G8B8A8_UNORM)
-                    .view_type(vk::ImageViewType::_2D)
-                    .subresource_range(
-                        vk::ImageSubresourceRangeBuilder::new()
-                            .aspect_mask(vk::ImageAspectFlags::COLOR)
-                            .base_array_layer(0)
-                            .base_mip_level(0)
-                            .layer_count(1)
-                            .level_count(1)
-                            .build(),
-                    ),
-                None,
-            )
-        }
-        .expect("Failed to create image view.");
-        self.font_image_size = dimensions;
-        self.font_image_version = texture.version;
-
-        // update descriptor set
-        for &font_descriptor_set in self.font_descriptor_sets.iter() {
-            unsafe {
-                device.update_descriptor_sets(
-                    &[vk::WriteDescriptorSetBuilder::new()
-                        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                        .dst_set(font_descriptor_set)
-                        .image_info(&[vk::DescriptorImageInfoBuilder::new()
-                            .image_view(self.font_image_view)
-                            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                            .sampler(self.sampler)])
-                        .dst_binding(0)],
-                    &[],
-                );
-            }
-        }
-
-        // map memory
-        let ptr = vmalloc
-            .map_memory(&self.font_image_staging_buffer_allocation)
-            .expect("Failed to map memory");
-        unsafe {
-            ptr.copy_from_nonoverlapping(data.as_ptr(), data.len());
-        }
-        vmalloc.unmap_memory(&self.font_image_staging_buffer_allocation);
-        drop(vmalloc);
-        // record buffer staging commands to command buffer
-        unsafe {
-            // update image layout to transfer dst optimal
-            device.cmd_pipeline_barrier(
-                command_buffer,
-                vk::PipelineStageFlags::HOST,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[vk::ImageMemoryBarrierBuilder::new()
-                    .image(self.font_image)
-                    .subresource_range(
-                        vk::ImageSubresourceRangeBuilder::new()
-                            .aspect_mask(vk::ImageAspectFlags::COLOR)
-                            .level_count(1)
-                            .layer_count(1)
-                            .base_mip_level(0)
-                            .base_array_layer(0)
-                            .build(),
-                    )
-                    .src_access_mask(vk::AccessFlags::default())
-                    .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                    .old_layout(vk::ImageLayout::UNDEFINED)
-                    .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)],
-            );
-
-            // copy staging buffer to image
-            device.cmd_copy_buffer_to_image(
-                command_buffer,
-                self.font_image_staging_buffer,
-                self.font_image,
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                &[vk::BufferImageCopyBuilder::new()
-                    .image_subresource(
-                        vk::ImageSubresourceLayersBuilder::new()
-                            .aspect_mask(vk::ImageAspectFlags::COLOR)
-                            .base_array_layer(0)
-                            .layer_count(1)
-                            .mip_level(0)
-                            .build(),
-                    )
-                    .image_extent(
-                        vk::Extent3DBuilder::new()
-                            .width(dimensions.0 as u32)
-                            .height(dimensions.1 as u32)
-                            .depth(1)
-                            .build(),
-                    )],
-            );
-
-            // update image layout to shader read only optimal
-            device.cmd_pipeline_barrier(
-                command_buffer,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::ALL_GRAPHICS,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[vk::ImageMemoryBarrierBuilder::new()
-                    .image(self.font_image)
-                    .subresource_range(
-                        vk::ImageSubresourceRangeBuilder::new()
-                            .aspect_mask(vk::ImageAspectFlags::COLOR)
-                            .level_count(1)
-                            .layer_count(1)
-                            .base_mip_level(0)
-                            .base_array_layer(0)
-                            .build(),
-                    )
-                    .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                    .dst_access_mask(vk::AccessFlags::SHADER_READ)
-                    .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                    .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)],
-            );
-        }
-         */
-    }
-
-    /// Registering user texture.
-    ///
-    /// Pass the Vulkan ImageView and Sampler.
-    /// `image_view`'s image layout must be `SHADER_READ_ONLY_OPTIMAL`.
-    ///
-    /// UserTexture needs to be unregistered when it is no longer needed.
-    ///
-    /// # Example
-    /// ```sh
-    /// cargo run --example user_texture
-    /// ```
-    /// [The example for user texture is in examples directory](https://github.com/MatchaChoco010/egui_winit_ash_vk_mem_erupt/tree/main/examples/user_texture)
-    pub fn register_user_texture(
-        &mut self,
-        image_view: vk::ImageView,
-        sampler: vk::Sampler,
-        rctx: &mut RenderingContext,
-    ) -> egui::TextureId {
-        // get texture id
-        let mut id = None;
-        for (i, user_texture) in self.user_textures.iter().enumerate() {
-            if user_texture.is_none() {
-                id = Some(i as u64);
-                break;
-            }
-        }
-        let id = if let Some(i) = id {
-            i
-        } else {
-            self.user_textures.len() as u64
-        };
-
-        // allocate and update descriptor set
-        let layouts = [self.user_texture_layout];
-        let descriptor_set = unsafe {
-            rctx.handles.device.allocate_descriptor_sets(
-                &vk::DescriptorSetAllocateInfoBuilder::new()
-                    .descriptor_pool(self.descriptor_pool)
-                    .set_layouts(&layouts),
-            )
-        }
-        .expect("Failed to create descriptor sets.")[0];
-        unsafe {
-            rctx.handles.device.update_descriptor_sets(
-                &[vk::WriteDescriptorSetBuilder::new()
-                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                    .dst_set(descriptor_set)
-                    .image_info(&[vk::DescriptorImageInfoBuilder::new()
-                        .image_view(image_view)
-                        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                        .sampler(sampler)])
-                    .dst_binding(0)],
-                &[],
-            );
-        }
-
-        if id == self.user_textures.len() as u64 {
-            self.user_textures.push(Some(descriptor_set));
-        } else {
-            self.user_textures[id as usize] = Some(descriptor_set);
-        }
-
-        egui::TextureId::User(id)
-    }
-
-    /// Unregister user texture.
-    ///
-    /// The internal texture (egui::TextureId::Egui) cannot be unregistered.
-    pub fn unregister_user_texture(
-        &mut self,
-        texture_id: egui::TextureId,
-        rctx: &mut RenderingContext,
-    ) {
-        if let egui::TextureId::User(id) = texture_id {
-            if let Some(descriptor_set) = self.user_textures[id as usize] {
-                unsafe {
-                    rctx.handles
-                        .device
-                        .free_descriptor_sets(self.descriptor_pool, &[descriptor_set])
-                        .expect("Failed to free descriptor sets.");
+        let mut vmalloc = rctx.handles.vmalloc.lock();
+        // Enqueue destruction of old images until after they're done being used
+        for id in textures.free.iter() {
+            if let egui::TextureId::Managed(id) = id {
+                if let Some((img, ds)) = self.managed_images.remove(id) {
+                    rctx.handles.enqueue_destroy(Box::new(ds));
+                    rctx.handles.enqueue_destroy(Box::new(img));
                 }
-                self.user_textures[id as usize] = None;
             }
-        } else {
-            eprintln!("The internal texture cannot be unregistered; please pass the texture ID of UserTexture.");
+        }
+        for (id, data) in textures.set.iter() {
+            if let egui::TextureId::Managed(id) = *id {
+                let (img, ds) = self.managed_images.entry(id).or_default();
+                if data.is_whole() || ds.1.is_null() || img.allocation.is_none() {
+                    if !ds.1.is_null() {
+                        rctx.handles.enqueue_destroy(Box::new(std::mem::take(ds)));
+                    }
+                    if img.allocation.is_some() {
+                        rctx.handles.enqueue_destroy(Box::new(std::mem::take(img)));
+                    }
+                    *img = OwnedImage::from(
+                        &mut vmalloc,
+                        &rctx.handles,
+                        &vk::ImageCreateInfoBuilder::new()
+                            .format(vk::Format::R8G8B8A8_UNORM)
+                            .initial_layout(vk::ImageLayout::UNDEFINED)
+                            .samples(vk::SampleCountFlagBits::_1)
+                            .tiling(vk::ImageTiling::OPTIMAL)
+                            .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST)
+                            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                            .image_type(vk::ImageType::_2D)
+                            .mip_levels(1)
+                            .array_layers(1)
+                            .extent(vk::Extent3D {
+                                width: data.image.width() as u32,
+                                height: data.image.height() as u32,
+                                depth: 1,
+                            }),
+                        &vk_mem_erupt::AllocationCreateInfo {
+                            usage: vk_mem_erupt::MemoryUsage::GpuOnly,
+                            ..Default::default()
+                        },
+                        vk::ImageViewType::_2D,
+                        vk::ImageAspectFlags::COLOR,
+                    );
+                    img.give_name(&rctx.handles, || format!("egui-{}", id));
+                    *ds = OwnedDescriptorSet::from(
+                        &rctx.handles,
+                        self.descriptor_pool,
+                        self.descriptor_set_layout,
+                    );
+                    // TODO: linear/nearest sampler
+                    unsafe {
+                        rctx.handles.device.update_descriptor_sets(
+                            &[vk::WriteDescriptorSetBuilder::new()
+                                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                                .dst_set(ds.1)
+                                .image_info(&[vk::DescriptorImageInfoBuilder::new()
+                                    .image_view(img.image_view)
+                                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                                    .sampler(self.sampler)])
+                                .dst_binding(0)],
+                            &[],
+                        );
+                    }
+                }
+                let (size, bytes): ([usize; 2], Vec<u8>) = match &data.image {
+                    egui::ImageData::Font(font) => (font.size, {
+                        let pixels = font.srgba_pixels(None);
+                        let mut v = Vec::with_capacity(pixels.len() * 4);
+                        for px in pixels {
+                            v.extend_from_slice(&px.to_array());
+                        }
+                        v
+                    }),
+                    egui::ImageData::Color(color) => (color.size, {
+                        let pixels = &color.pixels;
+                        let mut v = Vec::with_capacity(pixels.len() * 4);
+                        for px in pixels {
+                            v.extend_from_slice(&px.to_array());
+                        }
+                        v
+                    }),
+                };
+                let offset = data.pos.unwrap_or([0, 0]);
+                let copy_desc = vk::BufferImageCopyBuilder::new()
+                    .image_subresource(vk::ImageSubresourceLayers {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        mip_level: 0,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .image_offset(vk::Offset3D {
+                        x: offset[0] as i32,
+                        y: offset[1] as i32,
+                        z: 0,
+                    })
+                    .image_extent(vk::Extent3D {
+                        width: size[0] as u32,
+                        height: size[1] as u32,
+                        depth: 1,
+                    });
+                rctx.handles.enqueue_destroy(Box::new(img.upload_bytes(
+                    &mut vmalloc,
+                    &rctx.handles,
+                    command_buffer,
+                    copy_desc,
+                    &bytes[..],
+                )));
+            }
         }
     }
 
@@ -1275,16 +1051,11 @@ impl EguiIntegration {
     /// This method release vk objects memory that is not managed by Rust.
     pub unsafe fn destroy(&mut self, handles: &RenderingHandles) {
         let device = &handles.device;
-        unsafe {
-            device.destroy_descriptor_set_layout(self.user_texture_layout, allocation_cbs());
-            device.destroy_image_view(self.font_image_view, allocation_cbs());
+        let mut vmalloc = handles.vmalloc.lock();
+        for (_id, mut img) in self.managed_images.drain() {
+            img.1.destroy(&mut vmalloc, handles);
+            img.0.destroy(&mut vmalloc, handles);
         }
-        let vmalloc = handles.vmalloc.lock();
-        vmalloc.destroy_image(self.font_image, &self.font_image_allocation);
-        vmalloc.destroy_buffer(
-            self.font_image_staging_buffer,
-            &self.font_image_staging_buffer_allocation,
-        );
         for i in 0..self.index_buffers.len() {
             vmalloc.destroy_buffer(self.index_buffers[i], &self.index_buffer_allocations[i]);
         }
@@ -1296,13 +1067,7 @@ impl EguiIntegration {
             device.destroy_sampler(self.sampler, allocation_cbs());
             device.destroy_pipeline(self.pipeline, allocation_cbs());
             device.destroy_pipeline_layout(self.pipeline_layout, allocation_cbs());
-        }
-        for &descriptor_set_layout in self.descriptor_set_layouts.iter() {
-            unsafe {
-                device.destroy_descriptor_set_layout(descriptor_set_layout, allocation_cbs());
-            }
-        }
-        unsafe {
+            device.destroy_descriptor_set_layout(self.descriptor_set_layout, allocation_cbs());
             device.destroy_descriptor_pool(self.descriptor_pool, allocation_cbs());
         }
     }

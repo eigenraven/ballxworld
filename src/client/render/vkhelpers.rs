@@ -87,6 +87,71 @@ impl OwnedImage {
         }
     }
 
+    /// Returns the staging buffer which must be destroyed after the command buffer executes.
+    #[must_use]
+    pub fn upload_bytes(
+        &self,
+        vmalloc: &mut vma::Allocator,
+        handles: &RenderingHandles,
+        command_buffer: vk::CommandBuffer,
+        copy_desc: vk::BufferImageCopyBuilder,
+        bytes: &[u8],
+    ) -> OwnedBuffer {
+        let staging_buffer = OwnedBuffer::new_single_upload(vmalloc, bytes);
+        let device: &erupt::DeviceLoader = &handles.device;
+        let subresource_range = vk::ImageSubresourceRangeBuilder::new()
+            .aspect_mask(copy_desc.image_subresource.aspect_mask)
+            .level_count(1)
+            .layer_count(copy_desc.image_subresource.layer_count)
+            .base_mip_level(copy_desc.image_subresource.mip_level)
+            .base_array_layer(copy_desc.image_subresource.base_array_layer)
+            .build();
+        unsafe {
+            device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::HOST,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[vk::ImageMemoryBarrierBuilder::new()
+                    .image(self.image)
+                    .subresource_range(subresource_range)
+                    .src_access_mask(vk::AccessFlags::default())
+                    .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)],
+            );
+
+            // copy staging buffer to image
+            device.cmd_copy_buffer_to_image(
+                command_buffer,
+                staging_buffer.buffer,
+                self.image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[copy_desc.clone()],
+            );
+
+            // update image layout to shader read only optimal
+            device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::ALL_GRAPHICS,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[vk::ImageMemoryBarrierBuilder::new()
+                    .image(self.image)
+                    .subresource_range(subresource_range)
+                    .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                    .dst_access_mask(vk::AccessFlags::SHADER_READ)
+                    .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                    .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)],
+            );
+        }
+        staging_buffer
+    }
+
     pub fn give_name<F: Fn() -> S, S>(&self, handles: &RenderingHandles, name_fn: F)
     where
         S: Into<Vec<u8>>,
@@ -180,8 +245,7 @@ impl OwnedBuffer {
             .size(data_bytes.len() as u64);
         let aci = vma::AllocationCreateInfo {
             usage: vma::MemoryUsage::CpuOnly,
-            flags: vma::AllocationCreateFlags::DEDICATED_MEMORY
-                | vma::AllocationCreateFlags::MAPPED,
+            flags: vma::AllocationCreateFlags::MAPPED,
             ..Default::default()
         };
         let buf = Self::from(vmalloc, &bci, &aci);
@@ -458,5 +522,38 @@ impl Drop for DroppingCommandPool {
             }
             self.pool = vk::CommandPool::null();
         }
+    }
+}
+
+#[derive(Default)]
+pub struct OwnedDescriptorSet(pub vk::DescriptorPool, pub vk::DescriptorSet);
+
+impl OwnedDescriptorSet {
+    pub fn from(
+        handles: &RenderingHandles,
+        pool: vk::DescriptorPool,
+        layout: vk::DescriptorSetLayout,
+    ) -> Self {
+        let ds = unsafe {
+            handles
+                .device
+                .allocate_descriptor_sets(
+                    &vk::DescriptorSetAllocateInfoBuilder::new()
+                        .descriptor_pool(pool)
+                        .set_layouts(&[layout]),
+                )
+                .expect("Couldn't allocate descriptor sets")[0]
+        };
+        Self(pool, ds)
+    }
+}
+
+impl VulkanDeviceObject for OwnedDescriptorSet {
+    fn destroy(&mut self, vmalloc: &mut vma::Allocator, handles: &RenderingHandles) {
+        if !self.0.is_null() && !self.1.is_null() {
+            unsafe { handles.device.free_descriptor_sets(self.0, &[self.1]) }
+                .expect("Couldn't free descriptor set");
+        }
+        *self = Self::default();
     }
 }

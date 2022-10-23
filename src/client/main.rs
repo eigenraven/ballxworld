@@ -422,7 +422,6 @@ pub fn client_main() {
                 let mut iscreen = UiPlayerInventory {};
                 iscreen.draw(gui, Some((&world, &client_world)));
             }
-            guictx.late_prepass_draw(&mut fc);
             fc.end_region();
             drop(_p_span_prepass);
             let _p_span_inpass = bxw_util::tracy_client::span!("Render inpass", 4);

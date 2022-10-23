@@ -802,10 +802,7 @@ impl GuiRenderer {
             gui_buffers.push(Self::new_buffers(rctx, 16 * 1024));
         }
 
-        let font_defs = egui::FontDefinitions::default();
-        let style = egui::Style::default();
-        let egui_integ = EguiIntegration::new(font_defs, style, rctx);
-        egui_integ.context().set_visuals(egui::Visuals::dark());
+        let egui_integ = EguiIntegration::new(rctx);
 
         Self {
             resources,
@@ -874,26 +871,23 @@ impl GuiRenderer {
     pub fn prepass_draw(&mut self, fctx: &mut PrePassFrameContext) -> &mut GuiFrame {
         let frame = &mut self.gui_frame_pool[fctx.inflight_index];
         frame.reset();
-        self.egui_integ.begin_frame();
-
-        egui::Window::new("My Window")
-            .resizable(true)
-            .vscroll(true)
-            .show(&self.egui_integ.context(), |ui| {
-                ui.heading("Hello");
-                ui.label("Hello egui!");
-                ui.separator();
-                ui.hyperlink("https://github.com/emilk/egui");
-                ui.separator();
-                ui.label("Rotation");
-                ui.label("Light Position");
-            });
+        self.egui_integ.prepass_draw(fctx.cmd, fctx, |ctx| {
+            egui::Window::new("My Window")
+                .resizable(true)
+                .vscroll(true)
+                .show(ctx, |ui| {
+                    ui.heading("Hello");
+                    ui.label("Hello egui!");
+                    ui.separator();
+                    ui.hyperlink("https://github.com/emilk/egui");
+                    ui.separator();
+                    ui.label("Rotation");
+                    ui.label("Light Position");
+                    ui.allocate_space(ui.available_size());
+                });
+        });
 
         frame
-    }
-
-    pub fn late_prepass_draw(&mut self, fctx: &mut PrePassFrameContext) {
-        // FIXME: self.egui_integ.prepass_draw(fctx.cmd, fctx);
     }
 
     #[allow(clippy::cast_ptr_alignment)]
@@ -966,12 +960,7 @@ impl GuiRenderer {
             device.cmd_bind_index_buffer(fctx.cmd, ibuf.buffer, 0, vk::IndexType::UINT32);
             device.cmd_draw_indexed(fctx.cmd, self.gui_vtx_write.indxs.len() as u32, 1, 0, 0, 0);
         }
-        let (_output, shapes, cursor) = self.egui_integ.end_frame(fctx.rctx.window.subsystem());
-        let clipped_meshes = self.egui_integ.context().tessellate(shapes);
-        // FIXME: self.egui_integ.paint(fctx.cmd, clipped_meshes, fctx);
-        if let Some(_cursor) = cursor {
-            //TODO:fwd to InputManager
-        }
+        self.egui_integ.inpass_draw(fctx.cmd, fctx);
     }
 }
 
