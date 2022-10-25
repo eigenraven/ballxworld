@@ -1,5 +1,6 @@
 #![allow(clippy::upper_case_acronyms)]
 #![deny(unsafe_op_in_unsafe_fn)]
+#![deny(unused_must_use)]
 
 pub mod client;
 pub mod config;

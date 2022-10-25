@@ -1049,7 +1049,7 @@ impl EguiIntegration {
     ///
     /// # Safety
     /// This method release vk objects memory that is not managed by Rust.
-    pub unsafe fn destroy(&mut self, handles: &RenderingHandles) {
+    pub fn destroy(&mut self, handles: &RenderingHandles) {
         let device = &handles.device;
         let mut vmalloc = handles.vmalloc.lock();
         for (_id, mut img) in self.managed_images.drain() {

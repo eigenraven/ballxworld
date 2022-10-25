@@ -584,7 +584,6 @@ pub struct GuiRenderer {
     pub gui_frame_pool: Vec<GuiFrame>,
     pub gui_buffers: Vec<(OwnedBuffer, OwnedBuffer)>,
     gui_vtx_write: GuiVtxWriter,
-    pub egui_integ: EguiIntegration,
 }
 
 impl GuiRenderer {
@@ -802,8 +801,6 @@ impl GuiRenderer {
             gui_buffers.push(Self::new_buffers(rctx, 16 * 1024));
         }
 
-        let egui_integ = EguiIntegration::new(rctx);
-
         Self {
             resources,
             texture_ds,
@@ -814,7 +811,6 @@ impl GuiRenderer {
             gui_frame_pool,
             gui_buffers,
             gui_vtx_write: Default::default(),
-            egui_integ,
         }
     }
 
@@ -847,7 +843,6 @@ impl GuiRenderer {
 
     pub fn destroy(mut self, handles: &RenderingHandles) {
         unsafe {
-            self.egui_integ.destroy(handles);
             handles
                 .device
                 .destroy_pipeline(self.pipeline, allocation_cbs());
@@ -871,21 +866,6 @@ impl GuiRenderer {
     pub fn prepass_draw(&mut self, fctx: &mut PrePassFrameContext) -> &mut GuiFrame {
         let frame = &mut self.gui_frame_pool[fctx.inflight_index];
         frame.reset();
-        self.egui_integ.prepass_draw(fctx.cmd, fctx, |ctx| {
-            egui::Window::new("My Window")
-                .resizable(true)
-                .vscroll(true)
-                .show(ctx, |ui| {
-                    ui.heading("Hello");
-                    ui.label("Hello egui!");
-                    ui.separator();
-                    ui.hyperlink("https://github.com/emilk/egui");
-                    ui.separator();
-                    ui.label("Rotation");
-                    ui.label("Light Position");
-                    ui.allocate_space(ui.available_size());
-                });
-        });
 
         frame
     }
@@ -960,7 +940,6 @@ impl GuiRenderer {
             device.cmd_bind_index_buffer(fctx.cmd, ibuf.buffer, 0, vk::IndexType::UINT32);
             device.cmd_draw_indexed(fctx.cmd, self.gui_vtx_write.indxs.len() as u32, 1, 0, 0, 0);
         }
-        self.egui_integ.inpass_draw(fctx.cmd, fctx);
     }
 }
 

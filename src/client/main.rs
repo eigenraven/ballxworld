@@ -1,5 +1,4 @@
 #![allow(unused_variables)]
-#![deny(unused_must_use)]
 
 use crate::client::input::InputManager;
 use crate::client::render::resources::RenderingResources;
@@ -27,6 +26,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::client::render::egui_ash_sdl::EguiIntegration;
 use crate::client::render::voxrender::MeshDataHandler;
 use crate::client::screens::player_inventory::UiPlayerInventory;
 use crate::client::screens::UiScreen;
@@ -70,6 +70,7 @@ pub fn client_main() {
         rres.clone(),
     )));
     let mut guictx = Box::new(GuiRenderer::new(&cfg.read(), &mut rctx, rres.clone()));
+    let mut egui = Box::new(EguiIntegration::new(&mut rctx));
 
     let mut vxreg: Box<bxw_world::voxregistry::VoxelRegistry> = Box::default();
     {
@@ -316,61 +317,64 @@ pub fn client_main() {
             vctx.prepass_draw(&mut fc, &world);
             fc.end_region();
             fc.begin_region([0.5, 0.5, 0.5, 1.0], || "gui.prepass_draw");
-            let gui = guictx.prepass_draw(&mut fc);
-            gui.push_cmd(GuiOrderedCmd {
-                z_index: GUI_Z_LAYER_BACKGROUND,
-                color: GUI_WHITE,
-                cmd: GuiCmd::Rectangle {
-                    style: GuiControlStyle::Window,
-                    rect: GuiRect::from_xywh((0.0, 5.0), (0.0, 5.0), (0.0, 400.0), (0.0, 300.0)),
-                },
+            egui.prepass_draw(fc.cmd, &mut fc, |ctx| {
+                egui::Window::new("Debug info")
+                    .resizable(true)
+                    .vscroll(true)
+                    .show(ctx, |ui| {
+                        ui.label(DEBUG_DATA.hud_format());
+                        let pl_x = DEBUG_DATA.local_player_x.load(Ordering::Relaxed) as f64 / 10.0;
+                        let pl_y = DEBUG_DATA.local_player_y.load(Ordering::Relaxed) as f64 / 10.0;
+                        let pl_z = DEBUG_DATA.local_player_z.load(Ordering::Relaxed) as f64 / 10.0;
+                        let pl_chunk = bxw_world::ChunkPosition::from(
+                            bxw_world::BlockPosition::new(pl_x as i32, pl_y as i32, pl_z as i32),
+                        );
+                        let pl_cidx = world.get_chunk_index(pl_chunk);
+                        ui.horizontal(|ui| {
+                            ui.label("Player position:");
+                            ui.label(format!("X: {:.1}", pl_x));
+                            ui.label(format!("Y: {:.1}", pl_y));
+                            ui.label(format!("Z: {:.1}", pl_z));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Player chunk position:");
+                            ui.label(format!("X: {}", pl_chunk.0.x));
+                            ui.label(format!("Y: {}", pl_chunk.0.y));
+                            ui.label(format!("Z: {}", pl_chunk.0.z));
+                            ui.label(format!(
+                                "Index: {}",
+                                pl_cidx.map(|x| x as i64).unwrap_or(-1)
+                            ));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Looking at:");
+                            ui.label(format!("X: {} ({:.2})", look_pos.0.x, look_precise_pos.x));
+                            ui.label(format!("Y: {} ({:.2})", look_pos.0.y, look_precise_pos.y));
+                            ui.label(format!("Z: {} ({:.2})", look_pos.0.z, look_precise_pos.z));
+                        });
+                        ui.label(format!(
+                            "Place orientation: {} {:?}",
+                            i_orientation,
+                            OctahedralOrientation::from_index(i_orientation as usize).unwrap()
+                        ));
+                        if let Some(pl_cidx) = pl_cidx {
+                            let handler_statuses = [
+                                bxw_world::worldmgr::CHUNK_BLOCK_DATA,
+                                bxw_world::worldmgr::CHUNK_MESH_DATA,
+                            ]
+                            .into_iter()
+                            .map(|hid| world.get_handler(hid).borrow().status_array()[pl_cidx]);
+                            ui.label("Chunk data states: ");
+                            ui.horizontal(|ui| {
+                                for cds in handler_statuses {
+                                    ui.label(format!("{:?}, ", cds));
+                                }
+                            });
+                        }
+                        ui.allocate_space(ui.available_size());
+                    });
             });
-            {
-                let pl_x = DEBUG_DATA.local_player_x.load(Ordering::Relaxed) / 10;
-                let pl_y = DEBUG_DATA.local_player_y.load(Ordering::Relaxed) / 10;
-                let pl_z = DEBUG_DATA.local_player_z.load(Ordering::Relaxed) / 10;
-                let pl_chunk = bxw_world::ChunkPosition::from(bxw_world::BlockPosition::new(
-                    pl_x as i32,
-                    pl_y as i32,
-                    pl_z as i32,
-                ));
-                let pl_cidx = world.get_chunk_index(pl_chunk);
-                let mut debug_panel_text = format!(
-                    "{}\nLookV: {:?}\nLookP: {:?}\nPlace dir: {} {:?}\n{:?}\nPlayer CPOS, CIDX: {}, {:?}\n",
-                    DEBUG_DATA.hud_format(),
-                    look_pos,
-                    look_precise_pos,
-                    i_orientation,
-                    OctahedralOrientation::from_index(i_orientation as usize).unwrap(),
-                    OctahedralOrientation::from_index(i_orientation as usize)
-                        .unwrap()
-                        .to_matrixi(),
-                    pl_chunk,
-                    pl_cidx,
-                );
-                if let Some(pl_cidx) = pl_cidx {
-                    let handler_statuses = [
-                        bxw_world::worldmgr::CHUNK_BLOCK_DATA,
-                        bxw_world::worldmgr::CHUNK_MESH_DATA,
-                    ]
-                    .into_iter()
-                    .map(|hid| world.get_handler(hid).borrow().status_array()[pl_cidx]);
-                    use std::fmt::Write;
-                    writeln!(&mut debug_panel_text, "Chunk data states: ",).unwrap();
-                    for cds in handler_statuses {
-                        writeln!(&mut debug_panel_text, "{:?}, ", cds).unwrap();
-                    }
-                }
-                gui.push_cmd(GuiOrderedCmd {
-                    z_index: GUI_Z_LAYER_BACKGROUND + GUI_Z_OFFSET_CONTROL,
-                    color: GUI_BLACK,
-                    cmd: GuiCmd::FreeText {
-                        text: Cow::from(debug_panel_text),
-                        scale: 0.5,
-                        start_at: gv2((0.0, 10.0), (0.0, 10.0)),
-                    },
-                });
-            }
+            let gui = guictx.prepass_draw(&mut fc);
             gui.push_cmd(GuiOrderedCmd {
                 z_index: GUI_Z_LAYER_BACKGROUND + GUI_Z_OFFSET_CONTROL,
                 color: GUI_WHITE,
@@ -432,6 +436,7 @@ pub fn client_main() {
 
             fc.begin_region([0.5, 0.5, 0.5, 1.0], || "gui.inpass_draw");
             guictx.inpass_draw(&mut fc);
+            egui.inpass_draw(fc.cmd, &mut fc);
             fc.end_region();
 
             drop(_p_span_inpass);
@@ -447,7 +452,7 @@ pub fn client_main() {
         let _p_span_input = bxw_util::tracy_client::span!("Input processing", 4);
         input_mgr.pre_process();
         for event in event_pump.poll_iter() {
-            guictx.egui_integ.handle_event(&event, &mut rctx);
+            egui.handle_event(&event, &mut rctx);
             input_mgr.process(&mut rctx, event);
         }
         input_mgr.post_events_update(&mut rctx);
@@ -571,6 +576,7 @@ pub fn client_main() {
         .expect("Remaining references to VoxelRenderer")
         .into_inner();
     vctx.destroy(&rctx.handles);
+    egui.destroy(&rctx.handles);
     guictx.destroy(&rctx.handles);
     Arc::try_unwrap(rres)
         .unwrap_or_else(|_| panic!("Handle still held to resource manager"))
