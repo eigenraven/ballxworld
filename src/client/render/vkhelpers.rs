@@ -5,7 +5,7 @@ use parking_lot::MutexGuard;
 use std::ffi::CString;
 use std::mem::ManuallyDrop;
 use std::sync::Arc;
-use vk_mem_erupt as vma;
+use vk_mem_3_erupt as vma;
 
 pub fn name_vk_object<F: Fn() -> S, S>(
     handles: &RenderingHandles,

@@ -16,7 +16,7 @@ use std::borrow::Cow;
 use std::ffi::CString;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::sync::Arc;
-use vk_mem_erupt as vma;
+use vk_mem_3_erupt as vma;
 
 use super::egui_ash_sdl::EguiIntegration;
 

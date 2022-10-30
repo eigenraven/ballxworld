@@ -9,7 +9,7 @@ use fnv::FnvHashMap;
 use image::RgbaImage;
 use regex::{Match, Regex};
 use std::path::{Path, PathBuf};
-use vk_mem_erupt as vma;
+use vk_mem_3_erupt as vma;
 
 pub struct RenderingResources {
     pub gui_atlas: OwnedImage,

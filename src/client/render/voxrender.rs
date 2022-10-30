@@ -24,7 +24,7 @@ use std::cell::RefCell;
 use std::ffi::CString;
 use std::sync::Arc;
 use std::sync::Weak;
-use vk_mem_erupt as vma;
+use vk_mem_3_erupt as vma;
 
 pub mod vox {
     use crate::offset_of;
@@ -480,12 +480,12 @@ impl VoxelRenderer {
 
             let pci = vma::AllocatorPoolCreateInfo {
                 memory_type_index: mem_type,
-                flags: vma::AllocatorPoolCreateFlags::BUDDY_ALGORITHM
-                    | vma::AllocatorPoolCreateFlags::IGNORE_BUFFER_IMAGE_GRANULARITY,
+                flags: vma::AllocatorPoolCreateFlags::IGNORE_BUFFER_IMAGE_GRANULARITY,
                 block_size: 128 * 1024 * 1024,
                 min_block_count: 1,
                 max_block_count: 0,
-                frame_in_use_count: INFLIGHT_FRAMES,
+                priority: 1.0,
+                min_allocation_alignment: 0,
             };
             let pool = vmalloc
                 .create_pool(&pci)

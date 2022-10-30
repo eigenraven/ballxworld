@@ -24,7 +24,7 @@ use std::mem::ManuallyDrop;
 use std::os::raw::c_char;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Weak};
-use vk_mem_erupt as vma;
+use vk_mem_3_erupt as vma;
 
 static VULK_ALLOCATIONS: Mutex<Option<fnv::FnvHashMap<usize, std::alloc::Layout>>> =
     Mutex::new(None);
@@ -358,8 +358,8 @@ impl RenderingHandles {
         let entry = Arc::new(
             erupt::EntryLoader::new().expect("Can't load Vulkan system library entrypoints"),
         );
-        if entry.instance_version() < vk::make_api_version(0, 1, 2, 0) {
-            panic!("Vulkan 1.2 not found");
+        if entry.instance_version() < vk::API_VERSION_1_3 {
+            panic!("Vulkan 1.3 not found");
         }
         let (instance, ext_debug) = Self::create_instance(&entry, &window, cfg);
         let surface = {
@@ -471,13 +471,13 @@ impl RenderingHandles {
 
         let vmalloc = {
             let ai = vma::AllocatorCreateInfo {
-                flags: vma::AllocatorCreateFlags::EXTERNALLY_SYNCHRONIZED,
+                flags: vma::AllocatorCreateFlags::NONE,
                 instance: instance.clone(),
                 physical_device: physical,
                 device: device.clone(),
-                frame_in_use_count: INFLIGHT_FRAMES,
                 heap_size_limits: None,
                 preferred_large_heap_block_size: 0,
+                vulkan_api_version: vk::API_VERSION_1_3,
             };
             vma::Allocator::new(&ai).expect("Could not create Vulkan memory allocator")
         };
@@ -683,7 +683,7 @@ impl RenderingHandles {
         let enabled_layers: Vec<*const c_char> = raw_layers.iter().map(|s| s.as_ptr()).collect();
 
         let ai = vk::ApplicationInfoBuilder::new()
-            .api_version(vk::make_api_version(0, 1, 2, 0))
+            .api_version(vk::API_VERSION_1_3)
             .application_version(vk::make_api_version(0, 1, 0, 0))
             .engine_version(vk::make_api_version(0, 1, 0, 0))
             .application_name(&app_name)
@@ -1241,11 +1241,12 @@ impl RenderingContext {
             .vmalloc
             .lock_traced("vmalloc", file!(), line!());
 
-        let memstats = vmalloc.calculate_stats();
+        let memstats = vmalloc.calculate_statistics();
         if let Ok(memstats) = memstats {
-            DEBUG_DATA
-                .gpu_usage_bytes
-                .store(memstats.total.usedBytes as i64, Ordering::Release);
+            DEBUG_DATA.gpu_usage_bytes.store(
+                memstats.total.statistics.allocationBytes as i64,
+                Ordering::Release,
+            );
         }
 
         {

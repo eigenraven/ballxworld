@@ -61,6 +61,7 @@ use egui::{
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use std::ffi::CStr;
+use vk_mem_3_erupt as vma;
 
 use crate::client::render::vkhelpers::{OwnedBuffer, OwnedDescriptorSet, OwnedImage};
 use crate::client::render::vulkan::INFLIGHT_FRAMES;
@@ -71,7 +72,7 @@ use super::{
     PrePassFrameContext,
 };
 
-/// egui integration with winit, ash and vk_mem_erupt.
+/// egui integration with winit, ash and vma.
 pub struct EguiIntegration {
     logical_width: u32,
     logical_height: u32,
@@ -87,9 +88,9 @@ pub struct EguiIntegration {
     pipeline: vk::Pipeline,
     sampler: vk::Sampler,
     vertex_buffers: Vec<vk::Buffer>,
-    vertex_buffer_allocations: Vec<vk_mem_erupt::Allocation>,
+    vertex_buffer_allocations: Vec<vma::Allocation>,
     index_buffers: Vec<vk::Buffer>,
-    index_buffer_allocations: Vec<vk_mem_erupt::Allocation>,
+    index_buffer_allocations: Vec<vma::Allocation>,
     managed_images: FnvHashMap<u64, (OwnedImage, OwnedDescriptorSet)>,
     clipped_primitives: Vec<egui::ClippedPrimitive>,
 }
@@ -324,8 +325,8 @@ impl EguiIntegration {
                         .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
                         .sharing_mode(vk::SharingMode::EXCLUSIVE)
                         .size(Self::vertex_buffer_size()),
-                    &vk_mem_erupt::AllocationCreateInfo {
-                        usage: vk_mem_erupt::MemoryUsage::CpuToGpu,
+                    &vma::AllocationCreateInfo {
+                        usage: vma::MemoryUsage::CpuToGpu,
                         required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
                             | vk::MemoryPropertyFlags::HOST_COHERENT,
                         ..Default::default()
@@ -338,8 +339,8 @@ impl EguiIntegration {
                         .usage(vk::BufferUsageFlags::INDEX_BUFFER)
                         .sharing_mode(vk::SharingMode::EXCLUSIVE)
                         .size(Self::index_buffer_size()),
-                    &vk_mem_erupt::AllocationCreateInfo {
-                        usage: vk_mem_erupt::MemoryUsage::CpuToGpu,
+                    &vma::AllocationCreateInfo {
+                        usage: vma::MemoryUsage::CpuToGpu,
                         required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
                             | vk::MemoryPropertyFlags::HOST_COHERENT,
                         ..Default::default()
@@ -970,8 +971,8 @@ impl EguiIntegration {
                                 height: data.image.height() as u32,
                                 depth: 1,
                             }),
-                        &vk_mem_erupt::AllocationCreateInfo {
-                            usage: vk_mem_erupt::MemoryUsage::GpuOnly,
+                        &vma::AllocationCreateInfo {
+                            usage: vma::MemoryUsage::GpuOnly,
                             ..Default::default()
                         },
                         vk::ImageViewType::_2D,
