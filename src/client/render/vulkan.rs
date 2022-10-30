@@ -329,17 +329,19 @@ unsafe extern "system" fn debug_msg_callback(
         vk::DebugUtilsMessageSeverityFlagBitsEXT::ERROR_EXT => Level::Error,
         _ => Level::Warn,
     };
+    let stacktrace = if log_severity == Level::Info {
+        None
+    } else {
+        Some(backtrace::Backtrace::new())
+    };
     let str_msg = format!(
-        "{} [#{} {}]",
+        "{} [#{} {}] {:?}",
         unsafe { CStr::from_ptr(cb_data.p_message) }.to_string_lossy(),
         cb_data.message_id_number,
         unsafe { CStr::from_ptr(cb_data.p_message_id_name) }.to_string_lossy(),
+        stacktrace,
     );
     log::log!(target: "vulkan", log_severity, "{}", str_msg);
-    if msg_severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::ERROR_EXT {
-        let bt = backtrace::Backtrace::new();
-        log::error!(target: "vulkan", "{:?}", bt);
-    }
     vk::FALSE
 }
 

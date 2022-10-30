@@ -17,4 +17,4 @@ pattern = "{d(%_H:%M:%S%.3f)} {h({l:6})} {t} - {m}{n}"
 
 [root]
 level = "debug"
-appenders = ["stdout"]
+appenders = ["stdout", "tracefile"]
