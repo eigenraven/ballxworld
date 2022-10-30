@@ -12,7 +12,8 @@ use bxw_util::parking_lot::RawMutex;
 use bxw_util::*;
 use erupt::vk::EXT_DEBUG_UTILS_EXTENSION_NAME;
 use erupt::{
-    DeviceLoader, DeviceLoaderBuilder, EntryLoader, InstanceLoader, InstanceLoaderBuilder,
+    DeviceLoader, DeviceLoaderBuilder, EntryLoader, ExtendableFrom, InstanceLoader,
+    InstanceLoaderBuilder,
 };
 use num_traits::clamp;
 use parking_lot::{Mutex, MutexGuard};
@@ -423,9 +424,16 @@ impl RenderingHandles {
                     );
                 }
             }
-            let features = vk::PhysicalDeviceFeaturesBuilder::new()
-                .sampler_anisotropy(true)
-                .sample_rate_shading(true);
+            let mut features_13 =
+                erupt::vk1_3::PhysicalDeviceVulkan13FeaturesBuilder::new().synchronization2(true);
+            let mut features = vk::PhysicalDeviceFeatures2Builder::new()
+                .features(
+                    vk::PhysicalDeviceFeaturesBuilder::new()
+                        .sampler_anisotropy(true)
+                        .sample_rate_shading(true)
+                        .build(),
+                )
+                .extend_from(&mut features_13);
 
             queue_cnt = queue_family.1.queue_count.min(2);
             let priorities: Vec<std::os::raw::c_float> = if queue_cnt == 1 {
@@ -439,8 +447,8 @@ impl RenderingHandles {
 
             let dci = vk::DeviceCreateInfoBuilder::new()
                 .enabled_extension_names(&exts)
-                .enabled_features(&features)
-                .queue_create_infos(&queue_families);
+                .queue_create_infos(&queue_families)
+                .extend_from(&mut features);
 
             Arc::new(
                 unsafe {

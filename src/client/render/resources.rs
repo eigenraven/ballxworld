@@ -247,22 +247,23 @@ impl RenderingResources {
             //
             let cmd = OnetimeCmdGuard::new(&rctx.handles, None);
             unsafe {
-                rctx.handles.device.cmd_pipeline_barrier(
+                rctx.handles.device.cmd_pipeline_barrier2(
                     cmd.handle(),
-                    vk::PipelineStageFlags::TOP_OF_PIPE,
-                    vk::PipelineStageFlags::TRANSFER,
-                    vk::DependencyFlags::empty(),
-                    &[],
-                    &[],
-                    &[vk::ImageMemoryBarrierBuilder::new()
-                        .src_access_mask(vk::AccessFlags::empty())
-                        .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                        .old_layout(vk::ImageLayout::UNDEFINED)
-                        .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                        .src_queue_family_index(qfis[0])
-                        .dst_queue_family_index(qfis[0])
-                        .image(img.image)
-                        .subresource_range(whole_img)],
+                    &vk::DependencyInfoBuilder::new().image_memory_barriers(&[
+                        vk::ImageMemoryBarrier2Builder::new()
+                            .src_stage_mask(vk::PipelineStageFlags2::NONE)
+                            .src_access_mask(vk::AccessFlags2::NONE)
+                            .dst_stage_mask(
+                                vk::PipelineStageFlags2::COPY | vk::PipelineStageFlags2::BLIT,
+                            )
+                            .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                            .old_layout(vk::ImageLayout::UNDEFINED)
+                            .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                            .src_queue_family_index(qfis[0])
+                            .dst_queue_family_index(qfis[0])
+                            .image(img.image)
+                            .subresource_range(whole_img),
+                    ]),
                 );
             }
             let whole_mip0 = vk::ImageSubresourceLayers {
@@ -290,26 +291,25 @@ impl RenderingResources {
                 );
             }
             unsafe {
-                rctx.handles.device.cmd_pipeline_barrier(
+                rctx.handles.device.cmd_pipeline_barrier2(
                     cmd.handle(),
-                    vk::PipelineStageFlags::TRANSFER,
-                    vk::PipelineStageFlags::TRANSFER,
-                    vk::DependencyFlags::empty(),
-                    &[],
-                    &[],
-                    &[vk::ImageMemoryBarrierBuilder::new()
-                        .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                        .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
-                        .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                        .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-                        .src_queue_family_index(qfis[0])
-                        .dst_queue_family_index(qfis[0])
-                        .image(img.image)
-                        .subresource_range(vk::ImageSubresourceRange {
-                            base_mip_level: 0,
-                            level_count: 1,
-                            ..whole_img
-                        })],
+                    &vk::DependencyInfoBuilder::new().image_memory_barriers(&[
+                        vk::ImageMemoryBarrier2Builder::new()
+                            .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                            .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                            .dst_stage_mask(vk::PipelineStageFlags2::BLIT)
+                            .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
+                            .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                            .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                            .src_queue_family_index(qfis[0])
+                            .dst_queue_family_index(qfis[0])
+                            .image(img.image)
+                            .subresource_range(vk::ImageSubresourceRange {
+                                base_mip_level: 0,
+                                level_count: 1,
+                                ..whole_img
+                            }),
+                    ]),
                 );
             }
             for mip in 1..mip_lvls {
@@ -353,46 +353,44 @@ impl RenderingResources {
                         &img_blit,
                         vk::Filter::LINEAR,
                     );
-                    rctx.handles.device.cmd_pipeline_barrier(
+                    rctx.handles.device.cmd_pipeline_barrier2(
                         cmd.handle(),
-                        vk::PipelineStageFlags::TRANSFER,
-                        vk::PipelineStageFlags::TRANSFER,
-                        vk::DependencyFlags::empty(),
-                        &[],
-                        &[],
-                        &[vk::ImageMemoryBarrierBuilder::new()
-                            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                            .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
-                            .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                            .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-                            .src_queue_family_index(qfis[0])
-                            .dst_queue_family_index(qfis[0])
-                            .image(img.image)
-                            .subresource_range(vk::ImageSubresourceRange {
-                                base_mip_level: mip,
-                                level_count: 1,
-                                ..whole_img
-                            })],
+                        &vk::DependencyInfoBuilder::new().image_memory_barriers(&[
+                            vk::ImageMemoryBarrier2Builder::new()
+                                .src_stage_mask(vk::PipelineStageFlags2::BLIT)
+                                .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                                .dst_stage_mask(vk::PipelineStageFlags2::BLIT)
+                                .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
+                                .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                                .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                                .src_queue_family_index(qfis[0])
+                                .dst_queue_family_index(qfis[0])
+                                .image(img.image)
+                                .subresource_range(vk::ImageSubresourceRange {
+                                    base_mip_level: mip,
+                                    level_count: 1,
+                                    ..whole_img
+                                }),
+                        ]),
                     );
                 }
             }
             unsafe {
-                rctx.handles.device.cmd_pipeline_barrier(
+                rctx.handles.device.cmd_pipeline_barrier2(
                     cmd.handle(),
-                    vk::PipelineStageFlags::TRANSFER,
-                    vk::PipelineStageFlags::FRAGMENT_SHADER,
-                    vk::DependencyFlags::empty(),
-                    &[],
-                    &[],
-                    &[vk::ImageMemoryBarrierBuilder::new()
-                        .src_access_mask(vk::AccessFlags::TRANSFER_READ)
-                        .dst_access_mask(vk::AccessFlags::SHADER_READ)
-                        .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-                        .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                        .src_queue_family_index(qfis[0])
-                        .dst_queue_family_index(qfis[0])
-                        .image(img.image)
-                        .subresource_range(whole_img)],
+                    &vk::DependencyInfoBuilder::new().image_memory_barriers(&[
+                        vk::ImageMemoryBarrier2Builder::new()
+                            .src_stage_mask(vk::PipelineStageFlags2::BLIT)
+                            .src_access_mask(vk::AccessFlags2::TRANSFER_READ)
+                            .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                            .dst_access_mask(vk::AccessFlags2::SHADER_READ)
+                            .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                            .src_queue_family_index(qfis[0])
+                            .dst_queue_family_index(qfis[0])
+                            .image(img.image)
+                            .subresource_range(whole_img),
+                    ]),
                 );
             }
             cmd.execute(&queue);
