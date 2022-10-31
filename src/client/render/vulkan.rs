@@ -44,6 +44,9 @@ unsafe extern "system" fn vk_reallocate(
     alignment: usize,
     allocation_scope: vk::SystemAllocationScope,
 ) -> *mut std::ffi::c_void {
+    if p_original.is_null() {
+        return unsafe { vk_allocate(_p_user_data, size, alignment, allocation_scope) };
+    }
     let original_layout = vulk_allocations()
         .remove(&(p_original as usize))
         .unwrap_or_else(|| panic!("Vulkan trying to free memory without matching allocation. original: {p_original:?} size: {size} alignment: {alignment} scope: {allocation_scope:?}"));
