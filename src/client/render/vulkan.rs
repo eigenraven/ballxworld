@@ -42,11 +42,11 @@ unsafe extern "system" fn vk_reallocate(
     p_original: *mut std::ffi::c_void,
     size: usize,
     alignment: usize,
-    _allocation_scope: vk::SystemAllocationScope,
+    allocation_scope: vk::SystemAllocationScope,
 ) -> *mut std::ffi::c_void {
     let original_layout = vulk_allocations()
         .remove(&(p_original as usize))
-        .expect("Vulkan trying to free memory without matching allocation");
+        .unwrap_or_else(|| panic!("Vulkan trying to free memory without matching allocation. original: {p_original:?} size: {size} alignment: {alignment} scope: {allocation_scope:?}"));
     let new_layout = std::alloc::Layout::from_size_align(size, alignment).unwrap();
     let new_ptr = if alignment == original_layout.align() {
         unsafe { std::alloc::realloc(p_original as *mut u8, original_layout, size) as *mut c_void }
@@ -54,7 +54,7 @@ unsafe extern "system" fn vk_reallocate(
         unsafe {
             let new_ptr = std::alloc::alloc_zeroed(new_layout);
             if new_ptr.is_null() {
-                panic!("Couldn't allocate memory for Vulkan");
+                panic!("Couldn't allocate memory for Vulkan. original: {p_original:?} size: {size} alignment: {alignment} scope: {allocation_scope:?}");
             }
             std::ptr::copy_nonoverlapping(
                 p_original as *mut u8,
@@ -66,7 +66,7 @@ unsafe extern "system" fn vk_reallocate(
         }
     };
     if new_ptr.is_null() {
-        panic!("Couldn't reallocate vulkan memory");
+        panic!("Couldn't reallocate vulkan memory. original: {p_original:?} size: {size} alignment: {alignment} scope: {allocation_scope:?}");
     }
     vulk_allocations().insert(new_ptr as usize, new_layout);
     new_ptr
@@ -104,8 +104,10 @@ unsafe extern "system" fn vk_free(
 }
 
 struct AllocationCallbacksHolder(vk::AllocationCallbacks);
+
 // Safety: these are statically initialized, non-changing function pointers
 unsafe impl Send for AllocationCallbacksHolder {}
+
 // Safety: these are statically initialized, non-changing function pointers
 unsafe impl Sync for AllocationCallbacksHolder {}
 
