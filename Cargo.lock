@@ -2263,9 +2263,9 @@ checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
 
 [[package]]
 name = "vk-mem-3-erupt"
-version = "0.3.0+3.0.1"
+version = "0.4.0+3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "374a7e0974ea87ec0f401968647cdcadd4bb72e6438989bbf191db7598547d79"
+checksum = "18d26711e174e1f4f7d808b6baec3a4cf7b24d548562d34c2c81d82846c2c6d5"
 dependencies = [
  "bitflags",
  "cc",

@@ -487,7 +487,9 @@ impl RenderingHandles {
                 device: device.clone(),
                 heap_size_limits: None,
                 preferred_large_heap_block_size: 0,
+                allocation_callbacks: allocation_cbs().copied(),
                 vulkan_api_version: vk::API_VERSION_1_3,
+                device_memory_callbacks: None,
             };
             vma::Allocator::new(&ai).expect("Could not create Vulkan memory allocator")
         };
