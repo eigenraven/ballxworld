@@ -966,7 +966,11 @@ impl Swapchain {
         };
         self.swapimage_size = extent;
 
-        let image_count = u32::min(caps.min_image_count + 1, caps.max_image_count);
+        let image_count = if caps.max_image_count > 0 {
+            u32::min(caps.min_image_count + 1, caps.max_image_count)
+        } else {
+            caps.min_image_count + 1
+        };
 
         let (image_sharing_mode, queue_family_indices) = (
             vk::SharingMode::EXCLUSIVE,
