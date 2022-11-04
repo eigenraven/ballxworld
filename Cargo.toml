@@ -76,6 +76,8 @@ num_enum = "0.5"
 log4rs = { version = "1.0.0", features = ["all_components", "console_writer", "background_rotation", "config_parsing", "toml_format"] }
 rpmalloc-sys = { version = "0.2.1", features = [] }
 mio = { version = "0.8.2", features = ["os-poll", "net"] }
+quinn = { version = "0.9.0", features = ["futures-io"] }
+futures = "0.3"
 backtrace = "0.3"
 bxw_util = { path = "bxw_util" }
 bxw_world = { path = "bxw_world" }
