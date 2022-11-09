@@ -826,8 +826,9 @@ impl GuiRenderer {
             ..vbi
         };
         let ai = vma::AllocationCreateInfo {
-            usage: vma::MemoryUsage::CpuToGpu,
-            flags: vma::AllocationCreateFlags::MAPPED,
+            usage: vma::MemoryUsage::Auto,
+            flags: vma::AllocationCreateFlags::MAPPED
+                | vma::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
             ..Default::default()
         };
         let mut vmalloc = rctx

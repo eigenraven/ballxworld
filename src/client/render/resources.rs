@@ -219,7 +219,7 @@ impl RenderingResources {
                 .queue_family_indices(&qfis)
                 .initial_layout(vk::ImageLayout::UNDEFINED);
             let aci = vma::AllocationCreateInfo {
-                usage: vma::MemoryUsage::GpuOnly,
+                usage: vma::MemoryUsage::AutoPreferDevice,
                 flags: vma::AllocationCreateFlags::DEDICATED_MEMORY,
                 ..Default::default()
             };
@@ -447,7 +447,7 @@ fn rgba_to_owned_image(rgba: &RgbaImage, rctx: &RenderingContext) -> OwnedImage 
             .queue_family_indices(&qfis)
             .initial_layout(vk::ImageLayout::UNDEFINED);
         let aci = vma::AllocationCreateInfo {
-            usage: vma::MemoryUsage::GpuOnly,
+            usage: vma::MemoryUsage::AutoPreferDevice,
             flags: vma::AllocationCreateFlags::DEDICATED_MEMORY,
             ..Default::default()
         };

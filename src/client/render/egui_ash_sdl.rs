@@ -326,9 +326,8 @@ impl EguiIntegration {
                         .sharing_mode(vk::SharingMode::EXCLUSIVE)
                         .size(Self::vertex_buffer_size()),
                     &vma::AllocationCreateInfo {
-                        usage: vma::MemoryUsage::CpuToGpu,
-                        required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
-                            | vk::MemoryPropertyFlags::HOST_COHERENT,
+                        usage: vma::MemoryUsage::Auto,
+                        flags: vma::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
                         ..Default::default()
                     },
                 )
@@ -340,9 +339,8 @@ impl EguiIntegration {
                         .sharing_mode(vk::SharingMode::EXCLUSIVE)
                         .size(Self::index_buffer_size()),
                     &vma::AllocationCreateInfo {
-                        usage: vma::MemoryUsage::CpuToGpu,
-                        required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
-                            | vk::MemoryPropertyFlags::HOST_COHERENT,
+                        usage: vma::MemoryUsage::Auto,
+                        flags: vma::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
                         ..Default::default()
                     },
                 )
@@ -816,7 +814,6 @@ impl EguiIntegration {
                     egui::TextureId::Managed(id) => {
                         self.managed_images.get(&id).map(|(_img, ds)| ds.1)
                     }
-                    _ => None,
                 };
                 if let Some(descriptor) = descriptor {
                     unsafe {
@@ -972,7 +969,8 @@ impl EguiIntegration {
                                 depth: 1,
                             }),
                         &vma::AllocationCreateInfo {
-                            usage: vma::MemoryUsage::GpuOnly,
+                            usage: vma::MemoryUsage::AutoPreferDevice,
+                            preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
                             ..Default::default()
                         },
                         vk::ImageViewType::_2D,

@@ -1063,7 +1063,7 @@ impl Swapchain {
                 .queue_family_indices(&qfis)
                 .initial_layout(vk::ImageLayout::UNDEFINED);
             let aci = vma::AllocationCreateInfo {
-                usage: vma::MemoryUsage::GpuOnly,
+                usage: vma::MemoryUsage::AutoPreferDevice,
                 flags: vma::AllocationCreateFlags::DEDICATED_MEMORY,
                 ..Default::default()
             };
@@ -1101,7 +1101,7 @@ impl Swapchain {
                 .queue_family_indices(&qfis)
                 .initial_layout(vk::ImageLayout::UNDEFINED);
             let aci = vma::AllocationCreateInfo {
-                usage: vma::MemoryUsage::GpuOnly,
+                usage: vma::MemoryUsage::AutoPreferDevice,
                 flags: vma::AllocationCreateFlags::DEDICATED_MEMORY,
                 ..Default::default()
             };

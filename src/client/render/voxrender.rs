@@ -301,9 +301,9 @@ impl ChunkDataHandler for MeshDataHandler {
                             .queue_family_indices(&qfs)
                             .build_dangling();
                         let ai = vma::AllocationCreateInfo {
-                            usage: vma::MemoryUsage::CpuOnly,
+                            usage: vma::MemoryUsage::AutoPreferHost,
                             flags: vma::AllocationCreateFlags::MAPPED
-                                | vma::AllocationCreateFlags::DEDICATED_MEMORY,
+                                | vma::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
                             ..Default::default()
                         };
                         OwnedBuffer::from(
@@ -325,7 +325,7 @@ impl ChunkDataHandler for MeshDataHandler {
                             .queue_family_indices(&qfs)
                             .sharing_mode(vk::SharingMode::EXCLUSIVE);
                         let ai = vma::AllocationCreateInfo {
-                            usage: vma::MemoryUsage::GpuOnly,
+                            usage: vma::MemoryUsage::AutoPreferDevice,
                             pool: Some(pool.clone()),
                             ..Default::default()
                         };
@@ -471,7 +471,7 @@ impl VoxelRenderer {
                 .queue_family_indices(&qfs)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
             let aci = vma::AllocationCreateInfo {
-                usage: vma::MemoryUsage::GpuOnly,
+                usage: vma::MemoryUsage::AutoPreferDevice,
                 ..Default::default()
             };
             let mem_type = vmalloc
@@ -589,8 +589,9 @@ impl VoxelRenderer {
                 .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
                 .size(ubo_sz * u64::from(INFLIGHT_FRAMES));
             let aci = vma::AllocationCreateInfo {
-                usage: vma::MemoryUsage::CpuToGpu,
-                flags: vma::AllocationCreateFlags::MAPPED,
+                usage: vma::MemoryUsage::Auto,
+                flags: vma::AllocationCreateFlags::MAPPED
+                    | vma::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
                 ..Default::default()
             };
             let buf = OwnedBuffer::from(&mut vmalloc, &bci, &aci);

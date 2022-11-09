@@ -244,8 +244,9 @@ impl OwnedBuffer {
             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
             .size(data_bytes.len() as u64);
         let aci = vma::AllocationCreateInfo {
-            usage: vma::MemoryUsage::CpuOnly,
-            flags: vma::AllocationCreateFlags::MAPPED,
+            usage: vma::MemoryUsage::AutoPreferHost,
+            flags: vma::AllocationCreateFlags::MAPPED
+                | vma::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
             ..Default::default()
         };
         let buf = Self::from(vmalloc, &bci, &aci);
