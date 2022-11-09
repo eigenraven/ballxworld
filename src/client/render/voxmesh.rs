@@ -26,6 +26,20 @@ pub fn is_chunk_trivial(chunk: &VChunk, registry: &VoxelRegistry) -> bool {
 
 const AO_OCCLUSION_FACTOR: f32 = 0.88;
 
+fn as_rgba8(color: [f32; 4]) -> u32 {
+    (((color[0] * 255.0) as u32 & 0xFF) << 24)
+        | (((color[1] * 255.0) as u32 & 0xFF) << 16)
+        | (((color[2] * 255.0) as u32 & 0xFF) << 8)
+        | ((color[3] * 255.0) as u32 & 0xFF)
+}
+
+fn as_wxyz10(pos: [f32; 4]) -> u32 {
+    (((pos[3] * 2.0) as u32 & 0x3) << 30)
+        | (((pos[0] * 512.0) as u32 & 0x3FF) << 20)
+        | (((pos[1] * 512.0) as u32 & 0x3FF) << 10)
+        | ((pos[2] * 512.0) as u32 & 0x3FF)
+}
+
 #[allow(clippy::cognitive_complexity)]
 #[inline(never)]
 pub fn mesh_from_chunk(
@@ -124,9 +138,9 @@ pub fn mesh_from_chunk(
 
                 let voffset = vor_matf * vtx.offset;
                 let position: [f32; 4] = [
-                    ipos.x as f32 + voffset.x,
-                    ipos.y as f32 + voffset.y,
-                    ipos.z as f32 + voffset.z,
+                    ipos.x as f32 + voffset.x + 0.5,
+                    ipos.y as f32 + voffset.y + 0.5,
+                    ipos.z as f32 + voffset.z + 0.5,
                     1.0,
                 ];
                 let texid = *vdef.texture_mapping.at_direction(rot_side_dir);
@@ -137,13 +151,22 @@ pub fn mesh_from_chunk(
                     1.0,
                 ];
                 barycentric_color_sum += vtx.barycentric_sign as f32 * Vector4::from(color);
+                let mut idx_flags = ic_vidx as i32;
+                if vtx.barycentric.x > 0.1 {
+                    idx_flags |= 1 << 17;
+                }
+                if vtx.barycentric.y > 0.1 {
+                    idx_flags |= 1 << 18;
+                }
+                if vtx.barycentric.z > 0.1 {
+                    idx_flags |= 1 << 19;
+                }
                 vbuf.push(VoxelVertex {
-                    position,
-                    color,
+                    position: as_wxyz10(position.map(|p| p / CHUNK_DIM as f32)),
+                    color: as_rgba8(color),
                     texcoord: [vtx.texcoord.x, vtx.texcoord.y, texid as f32],
-                    index: ic_vidx as i32,
+                    index: idx_flags,
                     barycentric_color_offset: [0.0; 4], // initialized after the loop
-                    barycentric: [vtx.barycentric.x, vtx.barycentric.y, vtx.barycentric.z],
                 });
             }
             for v in &mut vbuf[voff as usize..] {

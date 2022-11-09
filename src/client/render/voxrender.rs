@@ -39,18 +39,19 @@ pub mod vox {
     #[derive(Copy, Clone, Default)]
     #[repr(C)]
     pub struct VoxelVertex {
-        pub position: [f32; 4],
-        pub color: [f32; 4],
+        /// W2 X10 Y10 Z10
+        pub position: u32,
+        /// R8 G8 B8 A8
+        pub color: u32,
         pub texcoord: [f32; 3],
         pub index: i32,
         pub barycentric_color_offset: [f32; 4],
-        pub barycentric: [f32; 3],
     }
 
     impl VoxelVertex {
         pub fn description() -> (
             [vk::VertexInputBindingDescriptionBuilder<'static>; 1],
-            [vk::VertexInputAttributeDescriptionBuilder<'static>; 6],
+            [vk::VertexInputAttributeDescriptionBuilder<'static>; 5],
         ) {
             let bind_dsc = [vk::VertexInputBindingDescriptionBuilder::new()
                 .binding(0)
@@ -60,14 +61,14 @@ pub mod vox {
                 vk::VertexInputAttributeDescription {
                     binding: 0,
                     location: 0,
-                    format: vk::Format::R32G32B32A32_SFLOAT,
+                    format: vk::Format::A2R10G10B10_UNORM_PACK32,
                     offset: offset_of!(Self, position) as u32,
                 }
                 .into_builder(),
                 vk::VertexInputAttributeDescription {
                     binding: 0,
                     location: 1,
-                    format: vk::Format::R32G32B32A32_SFLOAT,
+                    format: vk::Format::R8G8B8A8_UNORM,
                     offset: offset_of!(Self, color) as u32,
                 }
                 .into_builder(),
@@ -90,13 +91,6 @@ pub mod vox {
                     location: 4,
                     format: vk::Format::R32G32B32A32_SFLOAT,
                     offset: offset_of!(Self, barycentric_color_offset) as u32,
-                }
-                .into_builder(),
-                vk::VertexInputAttributeDescription {
-                    binding: 0,
-                    location: 5,
-                    format: vk::Format::R32G32B32_SFLOAT,
-                    offset: offset_of!(Self, barycentric) as u32,
                 }
                 .into_builder(),
             ];
