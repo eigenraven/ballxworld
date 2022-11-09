@@ -11,14 +11,12 @@ use bxw_util::*;
 use bxw_world::TextureMapping;
 pub use egui::emath;
 pub use egui::epaint;
-use itertools::zip;
 use std::borrow::Cow;
 use std::ffi::CString;
+use std::iter::zip;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::sync::Arc;
 use vk_mem_3_erupt as vma;
-
-use super::egui_ash_sdl::EguiIntegration;
 
 pub mod z {
     pub const GUI_Z_OFFSET_BG: i32 = 0;

@@ -5,8 +5,7 @@ use crate::client::render::resources::RenderingResources;
 use crate::client::render::ui;
 use crate::client::render::ui::z::*;
 use crate::client::render::ui::{
-    gv2, GuiCmd, GuiControlStyle, GuiCoord, GuiOrderedCmd, GuiRect, GuiRenderer, GuiVec2,
-    GUI_BLACK, GUI_WHITE,
+    GuiCmd, GuiControlStyle, GuiCoord, GuiOrderedCmd, GuiRect, GuiRenderer, GuiVec2, GUI_WHITE,
 };
 use crate::client::render::{RenderingContext, VoxelRenderer};
 use crate::client::world::{CameraSettings, ClientWorld};
@@ -18,7 +17,6 @@ use bxw_world::blocks::register_standard_blocks;
 use bxw_world::ecs::*;
 use bxw_world::entities::player::PLAYER_EYE_HEIGHT;
 use bxw_world::BlockPosition;
-use std::borrow::Cow;
 use std::cell::RefCell;
 use std::f64::consts::PI;
 use std::rc::Rc;

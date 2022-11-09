@@ -3,7 +3,6 @@ use crate::client::render::vkhelpers::{
 };
 use crate::client::world::ClientWorld;
 use crate::config::Config;
-use crate::log::error;
 use crate::vk;
 use bxw_util::debug_data::DEBUG_DATA;
 use bxw_util::fnv::FnvHashMap;

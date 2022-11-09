@@ -51,11 +51,11 @@
 #![warn(missing_docs)]
 
 use crate::{client::render::vulkan::allocation_cbs, vk};
+use bxw_util::bytemuck::bytes_of;
 use bxw_util::fnv::FnvHashMap;
-use bxw_util::{bytemuck::bytes_of, itertools::Itertools};
 use egui::{
     emath::{pos2, vec2},
-    epaint::{ClippedShape, Primitive},
+    epaint::Primitive,
     Context, Key,
 };
 use sdl2::event::{Event, WindowEvent};
@@ -63,7 +63,7 @@ use sdl2::keyboard::Keycode;
 use std::ffi::CStr;
 use vk_mem_3_erupt as vma;
 
-use crate::client::render::vkhelpers::{OwnedBuffer, OwnedDescriptorSet, OwnedImage};
+use crate::client::render::vkhelpers::{OwnedDescriptorSet, OwnedImage};
 use crate::client::render::vulkan::INFLIGHT_FRAMES;
 use crate::client::render::RenderingContext;
 
@@ -691,9 +691,9 @@ impl EguiIntegration {
         }
 
         // handle cursor icon
-        let mut cursor = None;
+        let mut _cursor = None;
         if self.current_cursor_icon != output.cursor_icon {
-            cursor = Self::egui_to_sdl_cursor_icon(output.cursor_icon);
+            _cursor = Self::egui_to_sdl_cursor_icon(output.cursor_icon);
             self.current_cursor_icon = output.cursor_icon;
         }
 
@@ -812,7 +812,7 @@ impl EguiIntegration {
             if let Primitive::Mesh(mesh) = mesh {
                 // update texture
                 let descriptor = match mesh.texture_id {
-                    egui::TextureId::User(id) => None, // TODO
+                    egui::TextureId::User(_id) => None, // TODO
                     egui::TextureId::Managed(id) => {
                         self.managed_images.get(&id).map(|(_img, ds)| ds.1)
                     }

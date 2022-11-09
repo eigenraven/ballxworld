@@ -549,7 +549,7 @@ impl OwnedDescriptorSet {
 }
 
 impl VulkanDeviceObject for OwnedDescriptorSet {
-    fn destroy(&mut self, vmalloc: &mut vma::Allocator, handles: &RenderingHandles) {
+    fn destroy(&mut self, _vmalloc: &mut vma::Allocator, handles: &RenderingHandles) {
         if !self.0.is_null() && !self.1.is_null() {
             unsafe { handles.device.free_descriptor_sets(self.0, &[self.1]) }
                 .expect("Couldn't free descriptor set");
