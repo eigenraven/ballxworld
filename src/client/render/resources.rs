@@ -312,37 +312,45 @@ impl RenderingResources {
                     ]),
                 );
             }
+            let mut img_blits = Vec::with_capacity(numimages as usize);
             for mip in 1..mip_lvls {
                 let prev_mip = mip - 1;
                 let prev_sz = ((idim.0 >> prev_mip).max(1), (idim.1 >> prev_mip).max(1));
                 let now_sz = ((idim.0 >> mip).max(1), (idim.1 >> mip).max(1));
-                let img_blit = [vk::ImageBlit {
-                    src_subresource: vk::ImageSubresourceLayers {
+                let mut ref_blit = vk::ImageBlitBuilder::new()
+                    .src_subresource(vk::ImageSubresourceLayers {
                         mip_level: prev_mip,
+                        layer_count: 1,
                         ..whole_mip0
-                    },
-                    src_offsets: [
+                    })
+                    .src_offsets([
                         vk::Offset3D::default(),
                         vk::Offset3D {
                             x: prev_sz.0 as i32,
                             y: prev_sz.1 as i32,
                             z: 1,
                         },
-                    ],
-                    dst_subresource: vk::ImageSubresourceLayers {
+                    ])
+                    .dst_subresource(vk::ImageSubresourceLayers {
                         mip_level: mip,
+                        layer_count: 1,
                         ..whole_mip0
-                    },
-                    dst_offsets: [
+                    })
+                    .dst_offsets([
                         vk::Offset3D::default(),
                         vk::Offset3D {
                             x: now_sz.0 as i32,
                             y: now_sz.1 as i32,
                             z: 1,
                         },
-                    ],
+                    ]);
+                img_blits.clear();
+                // Blit layer-by-layer to avoid NVIDIA messing up image order in the array for mipmaps
+                for imgidx in 0..numimages {
+                    ref_blit.src_subresource.base_array_layer = imgidx;
+                    ref_blit.dst_subresource.base_array_layer = imgidx;
+                    img_blits.push(ref_blit.clone());
                 }
-                .into_builder()];
                 unsafe {
                     rctx.handles.device.cmd_blit_image(
                         cmd.handle(),
@@ -350,7 +358,7 @@ impl RenderingResources {
                         vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                         img.image,
                         vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                        &img_blit,
+                        &img_blits,
                         vk::Filter::LINEAR,
                     );
                     rctx.handles.device.cmd_pipeline_barrier2(
