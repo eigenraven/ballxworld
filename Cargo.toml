@@ -14,6 +14,9 @@ rust-version = "1.64.0"
 [workspace.dependencies]
 # Common
 bytemuck = { version = "1.12", features = ["extern_crate_alloc", "extern_crate_std", "min_const_generics", "derive"] }
+capnp = "0.16"
+capnp-rpc = "0.16"
+capnpc = "0.16"
 flume = { version = "0.10.14", default-features = false, features = ["eventual-fairness"] }
 rand = { version = "0.8", features = ["nightly", "simd_support"] }
 rand_distr = "0.4"

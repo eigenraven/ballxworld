@@ -268,6 +268,9 @@ version = "0.1.0"
 dependencies = [
  "bxw_util",
  "bytemuck",
+ "capnp",
+ "capnp-rpc",
+ "capnpc",
  "noise",
  "rusqlite",
 ]
@@ -303,6 +306,42 @@ name = "bytes"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "89b2fd2a0dcf38d7971e2194b6b6eebab45ae01067456a7fd93d5547a61b70be"
+
+[[package]]
+name = "capnp"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35400c6acb55f1a91e6843beca189aba6bccd3c11fae5a7c0288fe5a1c3da822"
+
+[[package]]
+name = "capnp-futures"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cbe2479d667c6d44219a07d3da971379e4321ea7343b319994695be7da97a17"
+dependencies = [
+ "capnp",
+ "futures",
+]
+
+[[package]]
+name = "capnp-rpc"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62097700b1da1dd567d77e91ddd7da0fd22c790599ce56c4eea346d60dff0acd"
+dependencies = [
+ "capnp",
+ "capnp-futures",
+ "futures",
+]
+
+[[package]]
+name = "capnpc"
+version = "0.16.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7269a21f93230c105682fa08c86d43a94d72edc8f6984ff86d84d27880631820"
+dependencies = [
+ "capnp",
+]
 
 [[package]]
 name = "cc"

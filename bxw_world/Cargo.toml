@@ -7,14 +7,20 @@ keywords.workspace = true
 categories.workspace = true
 rust-version.workspace = true
 edition = "2021"
+build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build-dependencies]
+capnpc.workspace = true
 
 [dependencies]
 bytemuck.workspace = true
 noise.workspace = true
 rusqlite.workspace = true
 bxw_util.workspace = true
+capnp.workspace = true
+capnp-rpc.workspace = true
 
 [features]
 default = []
