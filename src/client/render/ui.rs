@@ -4,7 +4,7 @@ use crate::client::render::vkhelpers::{make_pipe_depthstencil, OwnedBuffer, Vulk
 use crate::client::render::vulkan::{allocation_cbs, RenderingHandles, INFLIGHT_FRAMES};
 use crate::client::render::{InPassFrameContext, PrePassFrameContext, RenderingContext};
 use crate::config::Config;
-use crate::vk;
+use crate::{vk, vk::ObjectHandle};
 use bxw_util::direction::*;
 use bxw_util::math::*;
 use bxw_util::*;

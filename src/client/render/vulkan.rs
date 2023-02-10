@@ -12,7 +12,7 @@ use bxw_util::*;
 use erupt::vk::EXT_DEBUG_UTILS_EXTENSION_NAME;
 use erupt::{
     DeviceLoader, DeviceLoaderBuilder, EntryLoader, ExtendableFrom, InstanceLoader,
-    InstanceLoaderBuilder,
+    InstanceLoaderBuilder, ObjectHandle,
 };
 use num_traits::clamp;
 use parking_lot::{Mutex, MutexGuard};
@@ -370,7 +370,7 @@ impl RenderingHandles {
         }
         let (instance, ext_debug) = Self::create_instance(&entry, &window, cfg);
         let surface = {
-            let sdlvki = instance.handle.object_handle() as sdl2::video::VkInstance;
+            let sdlvki = instance.handle.to_raw() as sdl2::video::VkInstance;
             let rsurf = window
                 .vulkan_create_surface(sdlvki)
                 .expect("Couldn't create VK surface") as u64;

@@ -1,5 +1,5 @@
 use crate::client::render::vulkan::{allocation_cbs, QueueGuard, RenderingHandles};
-use crate::vk;
+use crate::{vk, vk::ObjectHandle};
 use bxw_util::*;
 use parking_lot::MutexGuard;
 use std::ffi::CString;
@@ -159,13 +159,13 @@ impl OwnedImage {
         name_vk_object(
             handles,
             &name_fn,
-            self.image.object_handle(),
+            self.image.to_raw(),
             vk::ObjectType::IMAGE,
         );
         name_vk_object(
             handles,
             name_fn,
-            self.image_view.object_handle(),
+            self.image_view.to_raw(),
             vk::ObjectType::IMAGE_VIEW,
         );
     }
@@ -270,7 +270,7 @@ impl OwnedBuffer {
         name_vk_object(
             handles,
             name_fn,
-            self.buffer.object_handle(),
+            self.buffer.to_raw(),
             vk::ObjectType::BUFFER,
         );
     }
@@ -307,7 +307,7 @@ impl<'h> FenceGuard<'h> {
             let name_slice = name_fn();
             let name = CString::new(name_slice).unwrap();
             let ni = vk::DebugUtilsObjectNameInfoEXTBuilder::new()
-                .object_handle(fence.object_handle())
+                .object_handle(fence.to_raw())
                 .object_type(vk::ObjectType::FENCE)
                 .object_name(name.as_c_str());
             unsafe { handles.device.set_debug_utils_object_name_ext(&ni) }.unwrap();

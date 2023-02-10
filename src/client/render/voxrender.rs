@@ -7,7 +7,7 @@ use crate::client::render::vulkan::{
 use crate::client::render::*;
 use crate::client::world::CameraSettings;
 use crate::config::Config;
-use crate::vk;
+use crate::{vk, vk::ObjectHandle};
 use bxw_util::math::vec3;
 use bxw_util::math::*;
 use bxw_util::taskpool::Task;

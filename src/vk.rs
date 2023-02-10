@@ -8,4 +8,5 @@ pub use erupt::vk1_1::*;
 pub use erupt::vk1_2::*;
 pub use erupt::vk1_3::*;
 pub use erupt::ExtendableFrom;
+pub use erupt::ObjectHandle;
 pub use erupt::SmallVec;

@@ -3,6 +3,7 @@ use crate::client::render::vulkan::{allocation_cbs, RenderingHandles};
 use crate::client::render::{InPassFrameContext, RenderingContext};
 use crate::config::Config;
 use crate::vk;
+use crate::vk::ObjectHandle;
 use bxw_util::math::*;
 use std::ffi::CString;
 

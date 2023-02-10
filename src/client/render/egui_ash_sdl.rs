@@ -50,7 +50,7 @@
 //! [Full example is in examples directory](https://github.com/MatchaChoco010/egui_winit_ash_vk_mem/tree/main/examples/example)
 #![warn(missing_docs)]
 
-use crate::{client::render::vulkan::allocation_cbs, vk};
+use crate::{client::render::vulkan::allocation_cbs, vk, vk::ObjectHandle};
 use bxw_util::bytemuck::bytes_of;
 use bxw_util::fnv::FnvHashMap;
 use egui::{
