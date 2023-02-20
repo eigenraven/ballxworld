@@ -2,6 +2,8 @@
 
 A voxel-based sandbox game using Vulkan, SDL2 and Rust.
 
+![Screenshot of the game](/doc/screenshot.png)
+
 ## Building on ArchLinux
 
 #### Dependencies
