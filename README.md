@@ -7,7 +7,7 @@ A voxel-based sandbox game using Vulkan, SDL2 and Rust.
 ## Building on ArchLinux
 
 #### Dependencies
-Make sure to have the latest Rust (stable) and graphics drivers
+Make sure to have the latest Rust (nightly) and graphics drivers
 with Vulkan support installed and working first.
 
 Other dependencies:
